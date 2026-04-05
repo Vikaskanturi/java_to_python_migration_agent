@@ -1,0 +1,142 @@
+[1] PRODUCT REQUIREMENTS DOCUMENT  ·  v2.0
+[2] Java → Python
+[3] AI Migration Suite
+[4] GitHub Repo → Fully Migrated Python Project, Auto-Validated, Tested & Documented
+[7] 1. What This App Does
+[8] You give it a GitHub repo URL. It does everything else.
+[10] The app clones the Java repository, analyses its structure, and runs four AI-powered agents in sequence:
+[15] 2. User Flows
+[16] 2.1 CLI Flow
+[18] 2.2 Web UI Flow
+[19] Start the server once, then use it from any browser:
+[21] The web UI lets you:
+[22] Paste a GitHub repo URL into a text box
+[23] Select which agents to run (checkboxes)
+[24] Pick your LLM provider + model from a dropdown
+[25] Watch live progress logs as each agent runs
+[26] Download the full output as a .zip file when done
+[27] Preview the HTML migration report in the browser
+[30] 3. Multi-LLM Provider System
+[31] All LLM calls go through a single unified interface: core/llm_client.py. To swap providers, change one environment variable. No agent code changes needed.
+[33] 3.1 Supported Providers
+[35] 3.2 core/llm_client.py — The Unified Interface
+[37] 3.3 Provider Config (config.yaml)
+[40] 4. GitHub Ingestion Module
+[41] File: core/github_ingestion.py
+[42] This module is the very first thing that runs. It turns a GitHub URL into a structured, ready-to-process Java project on disk.
+[44] 4.1 What It Does
+[45] Validate the URL — must be a valid GitHub repo link
+[46] Clone the repo to a temp directory using git clone --depth=1 (shallow clone, fast)
+[47] Scan for all .java files recursively
+[48] Parse the build file (pom.xml or build.gradle) to extract dependencies
+[49] Build a project manifest JSON (see below) that all agents read from
+[50] If the repo is private, use a GitHub token from environment variable GITHUB_TOKEN
+[52] 4.2 Project Manifest (output/state/project_manifest.json)
+[54] 4.3 Public Interface
+[57] 5. Full Project Structure
+[60] 6. Orchestrator (orchestrator.py)
+[61] The orchestrator runs agents in sequence. Each agent writes its results to a state JSON file. The next agent reads that file — so agents are loosely coupled and can be rerun independently.
+[63] 6.1 Pipeline Sequence
+[65] 6.2 Progress Events (for Web UI)
+[66] The orchestrator emits progress events so the web UI can show live logs. It uses a simple callback pattern:
+[69] 7. Agent 1 — Migration Agent
+[70] File: agents/migration_agent.py
+[73] 7.1 Processing Steps (per Java file)
+[74] Load the file from the cloned repo path
+[75] If file > 300 lines: chunk it at class/method boundaries (see core/chunker.py)
+[76] For each chunk: build a prompt with class context + conversion rules and send to LLM
+[77] Reassemble chunks into a single Python module
+[78] Post-process: run black (formatter) + flake8 (linter) on the output
+[79] Write to output/python_project/ mirroring the Java package path
+[80] Log the mapping to migration_map.json
+[82] 7.2 Java → Python Conversion Rules (injected into every prompt)
+[84] 7.3 Prompt Template (prompts/migration.txt)
+[86] 7.4 Outputs
+[87] output/python_project/ — full Python package, mirroring Java structure
+[88] output/python_project/requirements.txt — Python dependencies
+[89] output/reports/migration_map.json — file-by-file mapping log
+[90] output/state/migration_state.json — state passed to Agents 2, 3, 4
+[93] 8. Agent 2 — Validation Agent
+[94] File: agents/validation_agent.py
+[97] 8.1 Processing Steps
+[98] Load migration_state.json to get the Java→Python file pairs
+[99] For each pair: send both files to LLM with the validation prompt
+[100] LLM returns a structured mismatch list (JSON)
+[101] If both are runnable: execute both with the same inputs and diff outputs (dynamic check)
+[102] Aggregate all mismatches into one validation_report.json
+[103] Calculate overall equivalence_score (0–100) based on mismatch severity
+[105] 8.2 Validation Report Schema
+[107] 8.3 Equivalence Score Logic
+[110] 9. Agent 3 — Test Generation Agent
+[111] File: agents/test_gen_agent.py
+[114] 9.1 Processing Steps
+[115] Load migration_state.json and validation_state.json
+[116] For each Java/Python file pair, send both + the mismatch list to the LLM
+[117] LLM returns two test files in JSON: { 'java_tests': '...', 'python_tests': '...' }
+[118] Write Java tests to output/tests/java/
+[119] Write Python tests to output/tests/python/
+[120] Run pytest --collect-only on the Python tests to check syntax (no execution)
+[121] Build a test coverage map and save to test_coverage_map.json
+[123] 9.2 Required Test Types (per class/module)
+[125] 9.3 Example Python Test Output
+[128] 10. Agent 4 — Documentation Agent
+[129] File: agents/doc_agent.py
+[132] 10.1 Output Documents
+[134] 10.2 Migration Mapping Table (inside migration_report.md)
+[137] 11. Web UI Specification
+[138] File: web/app.py — FastAPI server. File: web/templates/index.html — Main UI.
+[140] 11.1 Main Page (index.html) — UI Elements
+[141] Heading: Java → Python AI Migration Suite
+[142] Text input: GitHub Repository URL (placeholder: https://github.com/user/repo)
+[143] Checkboxes (all checked by default): Migration, Validation, Test Generation, Documentation
+[144] Dropdown: LLM Provider — Groq, HuggingFace, Ollama
+[145] Text input: Model name (pre-filled based on provider selection)
+[146] Text input: API Key (hidden; only shown for Groq and HuggingFace)
+[147] Button: Start Migration
+[148] Progress log panel: scrolling text area showing live SSE log messages
+[149] Download button: appears when pipeline completes — downloads output.zip
+[150] Preview button: opens full_report.html in a new tab
+[152] 11.2 API Endpoints
+[154] 11.3 Stack
+[155] FastAPI + uvicorn for the server
+[156] Jinja2 for HTML template rendering
+[157] Server-Sent Events (SSE) for live progress logs — no WebSocket needed
+[158] Python zipfile module for the download endpoint
+[159] Plain HTML + CSS — no frontend framework needed, keep it simple
+[162] 12. Shared Core Modules
+[163] 12.1 core/chunker.py
+[164] Splits large Java files so they fit within the LLM context window without losing structural context.
+[166] 12.2 core/prompt_builder.py
+[168] 12.3 core/file_utils.py
+[169] java_path_to_python_path(java_path) — converts com/example/Foo.java → com/example/foo.py
+[170] scan_java_files(root_dir) — returns all .java paths with metadata
+[171] write_python_file(path, content) — creates dirs + writes file
+[172] parse_pom_xml(path) — extracts Maven dependency names + versions
+[173] parse_build_gradle(path) — extracts Gradle dependency names + versions
+[175] 12.4 core/embeddings.py (Optional — large repos only)
+[176] Enable this when the repo has more than 50 Java files. It uses a local vector store so agents can retrieve semantically relevant files as context for each migration chunk.
+[177] Vector store: ChromaDB (open-source, no API key, runs locally)
+[178] Embedding model: sentence-transformers/all-MiniLM-L6-v2 (runs fully offline)
+[179] At startup: index all Java files into ChromaDB
+[180] Per migration chunk: retrieve top-3 related files as extra context
+[181] Controlled by a flag in config.yaml: embeddings: enabled: true
+[184] 13. Dependencies & Setup
+[185] 13.1 requirements.txt
+[187] 13.2 .env.example
+[189] 13.3 Groq Setup (Recommended for Speed)
+[191] 13.4 HuggingFace Setup
+[194] 14. Complete Output Reference
+[195] After a full pipeline run, the output/ directory contains:
+[199] 15. Build Notes for Anti-Gravity
+[202] 15.1 Non-Negotiable Rules
+[203] RULE 1 — All LLM calls go through core/llm_client.py. No agent calls any LLM SDK directly.
+[204] RULE 2 — Agents communicate only through state JSON files in output/state/. No direct function calls between agents.
+[205] RULE 3 — Every LLM JSON response is wrapped in try/except with a retry loop (max 3 retries, exponential backoff).
+[206] RULE 4 — The GitHub ingestion module must always do a --depth=1 shallow clone to keep it fast.
+[207] RULE 5 — Run black + flake8 on every generated Python file before writing it to output/.
+[208] RULE 6 — Never hardcode Java→Python transformation rules in agent code. All rules live in prompt templates (prompts/*.txt).
+[210] 15.2 Error Handling Pattern (use everywhere)
+[212] 15.3 Recommended Test Repo for Development
+[213] Use this repo while building and testing — it is medium complexity, well-structured, no external services needed:
+[215] 15.4 Deliverables Checklist (maps to assignment requirements)
+[217] End of PRD — Java → Python AI Migration Suite  v2.0  (GitHub-first, Multi-LLM)

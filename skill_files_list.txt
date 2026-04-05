@@ -1,0 +1,11 @@
+doc-agent\SKILL.md
+github-ingestion\SKILL.md
+github-ingestion\references\dependency_map.json
+java-chunker\SKILL.md
+llm-client\SKILL.md
+migration-agent\SKILL.md
+migration-agent\references\framework_map.json
+orchestrator\SKILL.md
+test-gen-agent\SKILL.md
+validation-agent\SKILL.md
+web-ui\SKILL.md

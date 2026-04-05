@@ -1,0 +1,2412 @@
+
+
+===== SKILL: doc-agent =====
+
+---
+name: doc-agent
+description: >
+  Use this skill when implementing or running Agent 4 of the Java→Python
+  pipeline: the Documentation Agent. This agent reads all state files and
+  produces human-readable Markdown documents and a single combined HTML
+  report. Triggers on any mention of "documentation agent", "generate docs",
+  "migration report", "developer guide", "HTML report", or "write the docs".
+  Read this skill before writing agents/doc_agent.py or prompts/doc_gen.txt.
+---
+
+# Documentation Agent Skill
+
+**File:** `agents/doc_agent.py`
+**Prompt:** `prompts/doc_gen.txt`
+**Reads:** all three state files + manifest
+**Writes:** `output/docs/` (5 documents)
+
+---
+
+## Output Documents
+
+| Document | File | Contents |
+|----------|------|----------|
+| Migration Report | `output/docs/migration_report.md` | File-by-file mapping, framework decisions, dependency translation |
+| Validation Report | `output/docs/validation_report.md` | Equivalence score, all mismatches, fixes |
+| Test Report | `output/docs/test_report.md` | Test count, coverage %, test case list |
+| Developer Guide | `output/docs/developer_guide.md` | How to run, extend, maintain the Python project |
+| Full HTML Report | `output/docs/full_report.html` | All 4 docs combined into one page |
+
+---
+
+## Implementation
+
+```python
+import json, logging
+from pathlib import Path
+from core.llm_client import LLMClient
+from core.prompt_builder import PromptBuilder
+from core.file_utils import save_state
+
+logger = logging.getLogger(__name__)
+
+class DocAgent:
+    def __init__(self, manifest: dict, migration_state: dict,
+                 validation_state: dict, test_state: dict,
+                 llm: LLMClient, output_dir: str = "output", emit=None):
+        self.manifest         = manifest
+        self.migration_state  = migration_state
+        self.validation_state = validation_state
+        self.test_state       = test_state
+        self.llm              = llm
+        self.output_dir       = Path(output_dir)
+        self.emit             = emit or (lambda s, m: logger.info(f"[{s}] {m}"))
+        self.pb               = PromptBuilder()
+        self.docs_dir         = self.output_dir / "docs"
+        self.docs_dir.mkdir(parents=True, exist_ok=True)
+
+    def run(self):
+        self.emit("docs", "Generating migration report...")
+        migration_md = self._gen_migration_report()
+
+        self.emit("docs", "Generating validation report...")
+        validation_md = self._gen_validation_report()
+
+        self.emit("docs", "Generating test report...")
+        test_md = self._gen_test_report()
+
+        self.emit("docs", "Generating developer guide...")
+        devguide_md = self._gen_developer_guide()
+
+        self.emit("docs", "Building combined HTML report...")
+        self._gen_html_report(migration_md, validation_md, test_md, devguide_md)
+
+        self.emit("docs", "Done. All documents written to output/docs/")
+
+    # ── Document generators ─────────────────────────────────────────────────
+
+    def _gen_migration_report(self) -> str:
+        migration_map = self.migration_state.get("migration_map", [])
+        data = {
+            "repo_url":      self.manifest["repo_url"],
+            "total_files":   len(migration_map),
+            "build_tool":    self.manifest.get("build_tool", "unknown"),
+            "dependencies":  self.manifest.get("dependencies", []),
+            "migration_map": migration_map,
+        }
+        system = self.pb.build("doc_gen", {
+            "section_name": "Migration Report",
+            "section_data": json.dumps(data, indent=2),
+            "instructions": (
+                "Write a Markdown migration report. Include:\n"
+                "1. A brief intro paragraph\n"
+                "2. A table: | Java File | Python File | Framework Changes | Lines | Status |\n"
+                "3. A dependency mapping section\n"
+                "4. Notable framework migration decisions\n"
+                "Use ## headers. Keep each section concise."
+            )
+        })
+        md = self.llm.complete(system, "Generate the migration report now.")
+        (self.docs_dir / "migration_report.md").write_text(md)
+        return md
+
+    def _gen_validation_report(self) -> str:
+        report = self.validation_state.get("report", {})
+        system = self.pb.build("doc_gen", {
+            "section_name": "Validation Report",
+            "section_data": json.dumps(report, indent=2),
+            "instructions": (
+                "Write a Markdown validation report. Include:\n"
+                "1. Score badge line: **Score: X/100 — Status**\n"
+                "2. Summary paragraph\n"
+                "3. Mismatches table: | Severity | Location | Description | Recommendation |\n"
+                "4. A 'Next Steps' section for any Critical mismatches\n"
+                "Use ## headers."
+            )
+        })
+        md = self.llm.complete(system, "Generate the validation report now.")
+        (self.docs_dir / "validation_report.md").write_text(md)
+        return md
+
+    def _gen_test_report(self) -> str:
+        coverage_map = self.test_state.get("coverage_map", [])
+        total_tests  = sum(c.get("test_count", 0) for c in coverage_map)
+        system = self.pb.build("doc_gen", {
+            "section_name": "Test Report",
+            "section_data": json.dumps(coverage_map, indent=2),
+            "instructions": (
+                f"Write a Markdown test report. Include:\n"
+                f"1. Summary: {total_tests} tests across {len(coverage_map)} modules\n"
+                f"2. A table: | Module | Test File | Test Count | Status |\n"
+                f"3. How to run the tests (pytest command)\n"
+                f"4. Any modules with parse errors (flag them)\n"
+                f"Use ## headers."
+            )
+        })
+        md = self.llm.complete(system, "Generate the test report now.")
+        (self.docs_dir / "test_report.md").write_text(md)
+        return md
+
+    def _gen_developer_guide(self) -> str:
+        system = self.pb.build("doc_gen", {
+            "section_name": "Developer Guide",
+            "section_data": json.dumps({
+                "repo_url":    self.manifest["repo_url"],
+                "python_dir":  "output/python_project/",
+                "build_tool":  self.manifest.get("build_tool"),
+                "llm_providers": ["groq", "huggingface", "ollama"],
+            }, indent=2),
+            "instructions": (
+                "Write a developer guide in Markdown. Include:\n"
+                "1. Prerequisites (Python 3.11+, git, LLM provider setup)\n"
+                "2. Installation steps (clone, pip install, set env vars)\n"
+                "3. How to run the full pipeline (CLI command)\n"
+                "4. How to run individual agents\n"
+                "5. How to run the migrated Python project\n"
+                "6. How to run the pytest suite\n"
+                "7. How to extend (add a new agent, change the LLM model)\n"
+                "8. Troubleshooting: common errors and fixes\n"
+                "Use ## headers and bash code blocks."
+            )
+        })
+        md = self.llm.complete(system, "Generate the developer guide now.")
+        (self.docs_dir / "developer_guide.md").write_text(md)
+        return md
+
+    def _gen_html_report(self, migration_md, validation_md, test_md, devguide_md):
+        """Combine all 4 markdown docs into a single styled HTML report."""
+        try:
+            import markdown as md_lib
+            migration_html  = md_lib.markdown(migration_md,  extensions=["tables","fenced_code"])
+            validation_html = md_lib.markdown(validation_md, extensions=["tables","fenced_code"])
+            test_html       = md_lib.markdown(test_md,       extensions=["tables","fenced_code"])
+            devguide_html   = md_lib.markdown(devguide_md,   extensions=["tables","fenced_code"])
+        except ImportError:
+            # Fallback: wrap each section in <pre>
+            def wrap(text): return f"<pre>{text}</pre>"
+            migration_html  = wrap(migration_md)
+            validation_html = wrap(validation_md)
+            test_html       = wrap(test_md)
+            devguide_html   = wrap(devguide_md)
+
+        report = self.validation_state.get("report", {})
+        score  = report.get("equivalence_score", "?")
+        status = report.get("status", "?")
+
+        html = HTML_TEMPLATE.format(
+            repo_url        = self.manifest["repo_url"],
+            score           = score,
+            status          = status,
+            migration_html  = migration_html,
+            validation_html = validation_html,
+            test_html       = test_html,
+            devguide_html   = devguide_html,
+        )
+        (self.docs_dir / "full_report.html").write_text(html, encoding="utf-8")
+        self.emit("docs", "  ✓ full_report.html written")
+```
+
+---
+
+## Documentation Prompt Template (`prompts/doc_gen.txt`)
+
+```
+You are a technical writer producing migration documentation for developers.
+
+Section: {section_name}
+Data: {section_data}
+
+Instructions:
+{instructions}
+
+General rules:
+- Write in clear, simple English
+- Explain WHY decisions were made, not just what was done
+- Highlight anything that needs manual review in a > blockquote
+- Keep each section under 600 words
+- Use Markdown formatting: headers, tables, code blocks
+```
+
+---
+
+## HTML Report Template
+
+Store this in `agents/doc_agent.py` as a module-level constant:
+
+```python
+HTML_TEMPLATE = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Migration Report — {repo_url}</title>
+<style>
+  body {{ font-family: Arial, sans-serif; max-width: 960px; margin: 40px auto; padding: 0 24px; color: #222; }}
+  h1 {{ color: #1a3c6e; border-bottom: 3px solid #1a3c6e; padding-bottom: 8px; }}
+  h2 {{ color: #1a3c6e; margin-top: 40px; }}
+  h3 {{ color: #0d7377; }}
+  nav {{ background: #f0f4f8; padding: 16px 24px; border-radius: 8px; margin-bottom: 32px; }}
+  nav a {{ margin-right: 20px; color: #1a3c6e; text-decoration: none; font-weight: bold; }}
+  .badge {{ display: inline-block; padding: 4px 12px; border-radius: 4px; font-weight: bold; }}
+  .pass {{ background: #d4edda; color: #155724; }}
+  .fail {{ background: #f8d7da; color: #721c24; }}
+  .review {{ background: #fff3cd; color: #856404; }}
+  table {{ border-collapse: collapse; width: 100%; margin: 16px 0; }}
+  th {{ background: #1a3c6e; color: white; padding: 8px 12px; text-align: left; }}
+  td {{ padding: 8px 12px; border-bottom: 1px solid #ddd; }}
+  tr:nth-child(even) {{ background: #f8f9fa; }}
+  pre, code {{ background: #1e1e1e; color: #d4d4d4; padding: 12px; border-radius: 4px; overflow-x: auto; }}
+  section {{ margin-bottom: 60px; }}
+</style>
+</head>
+<body>
+<h1>Java → Python Migration Report</h1>
+<p><strong>Repository:</strong> <a href="{repo_url}">{repo_url}</a></p>
+<p>Equivalence score: <span class="badge {status_class}">{score}/100 — {status}</span></p>
+<nav>
+  <a href="#migration">Migration</a>
+  <a href="#validation">Validation</a>
+  <a href="#tests">Tests</a>
+  <a href="#devguide">Developer Guide</a>
+</nav>
+<section id="migration"><h2>Migration Report</h2>{migration_html}</section>
+<section id="validation"><h2>Validation Report</h2>{validation_html}</section>
+<section id="tests"><h2>Test Report</h2>{test_html}</section>
+<section id="devguide"><h2>Developer Guide</h2>{devguide_html}</section>
+</body>
+</html>"""
+```
+
+> **Note for AI builder:** The `{status_class}` variable should be set to
+> `"pass"`, `"review"`, or `"fail"` based on the validation status string
+> before calling `.format()`.
+
+---
+
+## Dependencies
+Add to `requirements.txt`:
+```
+markdown>=3.6    # for HTML conversion; fallback to <pre> if not installed
+```
+
+
+===== SKILL: github-ingestion =====
+
+---
+name: github-ingestion
+description: >
+  Use this skill whenever the user provides a GitHub repository URL and wants
+  to clone it, scan its Java files, parse its build system (Maven/Gradle), and
+  produce a structured project manifest for downstream processing. Triggers on
+  any mention of "clone a repo", "GitHub URL", "pull from GitHub", "scan Java
+  project", or when any agent needs to read a Java repo from a URL before doing
+  further work. Always use this skill FIRST in the Java→Python pipeline before
+  any other agent runs.
+---
+
+# GitHub Ingestion Skill
+
+Turns a GitHub repo URL into a structured, ready-to-process manifest on disk.
+This is **Step 0** of the pipeline — no other agent can run without it.
+
+## Responsibilities
+1. Validate the GitHub URL
+2. Clone the repo (shallow, fast)
+3. Detect the build system
+4. Scan all `.java` files with metadata
+5. Parse dependencies from `pom.xml` / `build.gradle`
+6. Write `output/state/project_manifest.json`
+7. Clean up the temp clone after the pipeline finishes
+
+---
+
+## Implementation: `core/github_ingestion.py`
+
+```python
+import os, json, shutil, subprocess, tempfile
+from pathlib import Path
+from dataclasses import dataclass, asdict
+
+@dataclass
+class JavaFileInfo:
+    path: str           # relative to repo root
+    abs_path: str       # absolute on disk
+    package: str        # e.g. "org.apache.commons.lang3"
+    class_name: str     # e.g. "StringUtils"
+    lines: int
+    python_target: str  # where the migrated .py file will be written
+
+class GitHubIngestion:
+    def __init__(self, repo_url: str, branch: str = None,
+                 output_dir: str = "output", github_token: str = None):
+        self.repo_url    = repo_url
+        self.branch      = branch
+        self.output_dir  = Path(output_dir)
+        self.token       = github_token or os.getenv("GITHUB_TOKEN")
+        self.clone_dir   = None   # set after cloning
+
+    def run(self) -> dict:
+        """Main entry point. Returns the manifest dict and saves it to disk."""
+        self._validate_url()
+        self._clone()
+        build_tool = self._detect_build_tool()
+        java_files = self._scan_java_files()
+        dependencies = self._parse_dependencies(build_tool)
+        manifest = self._build_manifest(build_tool, java_files, dependencies)
+        self._save_manifest(manifest)
+        return manifest
+
+    def cleanup(self):
+        """Remove the cloned temp directory. Call after pipeline finishes."""
+        if self.clone_dir and Path(self.clone_dir).exists():
+            shutil.rmtree(self.clone_dir)
+```
+
+### Key methods
+
+#### `_validate_url()`
+```python
+import re
+GITHUB_RE = re.compile(r'^https://github\.com/[\w.-]+/[\w.-]+(\.git)?$')
+if not GITHUB_RE.match(self.repo_url):
+    raise ValueError(f"Invalid GitHub URL: {self.repo_url}")
+```
+
+#### `_clone()`
+```python
+def _clone(self):
+    self.clone_dir = tempfile.mkdtemp(prefix="java_migration_")
+    url = self.repo_url
+    if self.token:
+        url = url.replace("https://", f"https://{self.token}@")
+    cmd = ["git", "clone", "--depth=1"]
+    if self.branch:
+        cmd += ["--branch", self.branch]
+    cmd += [url, self.clone_dir]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(f"git clone failed:\n{result.stderr}")
+```
+
+#### `_scan_java_files()`
+```python
+def _scan_java_files(self) -> list[JavaFileInfo]:
+    files = []
+    for p in Path(self.clone_dir).rglob("*.java"):
+        if any(skip in p.parts for skip in ["test", "Test", "generated"]):
+            continue  # skip test + generated sources in first pass
+        rel   = p.relative_to(self.clone_dir)
+        pkg   = self._path_to_package(rel)
+        name  = p.stem
+        lines = len(p.read_text(errors="replace").splitlines())
+        py_target = str(self.output_dir / "python_project" /
+                        self._java_path_to_python(rel))
+        files.append(JavaFileInfo(str(rel), str(p), pkg, name, lines, py_target))
+    return files
+```
+
+#### `_java_path_to_python(rel_path)` — path mapping rule
+```
+src/main/java/org/apache/commons/lang3/StringUtils.java
+→ org/apache/commons/lang3/string_utils.py
+
+Rules:
+- Drop "src/main/java/" prefix
+- Convert CamelCase filename → snake_case
+- Replace .java with .py
+```
+
+```python
+import re
+def _java_path_to_python(self, rel: Path) -> Path:
+    parts = list(rel.parts)
+    # strip src/main/java or src/
+    for prefix in [["src","main","java"], ["src","java"], ["src"]]:
+        if parts[:len(prefix)] == prefix:
+            parts = parts[len(prefix):]
+            break
+    # snake_case the filename
+    stem = re.sub(r'(?<!^)(?=[A-Z])', '_', parts[-1].replace(".java","")).lower()
+    parts[-1] = stem + ".py"
+    return Path(*parts)
+```
+
+#### `_parse_dependencies(build_tool)`
+- **Maven** (`pom.xml`): use `xml.etree.ElementTree` to extract `<dependency>` blocks → `{ groupId, artifactId, version }`
+- **Gradle** (`build.gradle`): regex scan for `implementation '...'` / `compile '...'` lines
+- Map each Java dependency to its Python equivalent using `references/dependency_map.json`
+
+#### `_build_manifest(...)` — output schema
+```json
+{
+  "repo_url": "https://github.com/apache/commons-lang",
+  "repo_name": "commons-lang",
+  "branch": "master",
+  "cloned_to": "/tmp/java_migration_abc123",
+  "build_tool": "maven",
+  "java_files": [
+    {
+      "path": "src/main/java/org/apache/commons/lang3/StringUtils.java",
+      "abs_path": "/tmp/java_migration_abc123/src/...",
+      "package": "org.apache.commons.lang3",
+      "class_name": "StringUtils",
+      "lines": 847,
+      "python_target": "output/python_project/org/apache/commons/lang3/string_utils.py"
+    }
+  ],
+  "dependencies": [
+    { "java": "junit:junit", "version": "4.13", "python_equiv": "pytest" }
+  ],
+  "total_java_files": 42,
+  "total_lines": 12847
+}
+```
+
+---
+
+## Error Handling Rules
+| Error | Action |
+|-------|--------|
+| Invalid URL format | Raise `ValueError` immediately, do not clone |
+| `git clone` fails | Raise `RuntimeError` with stderr; cleanup temp dir |
+| No `.java` files found | Raise `ValueError("No Java source files found in repo")` |
+| `pom.xml` malformed | Log warning, continue with empty dependency list |
+| Private repo, no token | Raise `RuntimeError` with instructions to set `GITHUB_TOKEN` |
+
+---
+
+## Reference files
+- `references/dependency_map.json` — Java artifact → Python package mapping (load when parsing deps)
+
+## Usage in orchestrator
+```python
+from core.github_ingestion import GitHubIngestion
+
+ingestion = GitHubIngestion(
+    repo_url=args.repo,
+    branch=args.branch,
+    output_dir=args.output_dir,
+)
+manifest = ingestion.run()       # Step 0 — always first
+# ... run agents ...
+ingestion.cleanup()              # Always call at end
+```
+
+
+===== SKILL: java-chunker =====
+
+---
+name: java-chunker
+description: >
+  Use this skill whenever a Java source file needs to be split into smaller
+  pieces that fit within an LLM context window. Triggers when implementing
+  core/chunker.py, when a Java file exceeds ~300 lines, or when any agent needs
+  to process large Java files without losing class/method context. Also use
+  when implementing core/prompt_builder.py and core/file_utils.py, which are
+  part of the same shared infrastructure layer.
+---
+
+# Java Chunker + Shared Utilities Skill
+
+Covers three files in `core/`:
+- `chunker.py` — splits large Java files at semantic boundaries
+- `prompt_builder.py` — loads and fills prompt templates
+- `file_utils.py` — file I/O and path mapping helpers
+
+---
+
+## 1. `core/chunker.py`
+
+### Why chunking is needed
+LLMs have context limits (~8k–32k tokens). A Java file of 800 lines is ~6,000 tokens — too large for a single call with system prompt included. The chunker splits at **class or method boundaries** so each chunk is semantically complete and the LLM gets enough context to translate correctly.
+
+### Design rules
+- Never split inside a method body
+- Always prepend the **class header block** (package + imports + class declaration) to every chunk so the LLM knows the surrounding context
+- Return structured dicts so agents know how many chunks exist per file
+
+### Implementation
+
+```python
+import re
+from pathlib import Path
+from dataclasses import dataclass
+
+@dataclass
+class JavaChunk:
+    code: str           # the chunk content (includes context header)
+    context: str        # class header block alone (package + imports + class sig)
+    chunk_index: int    # 1-based
+    total_chunks: int
+    file_path: str
+    class_name: str
+
+def chunk_java_file(filepath: str, max_tokens: int = 3000) -> list[JavaChunk]:
+    """
+    Split a Java file into chunks at method boundaries.
+    Each chunk includes the class context header prepended.
+    max_tokens is approximate (1 token ≈ 4 chars).
+    """
+    source = Path(filepath).read_text(errors="replace")
+    max_chars = max_tokens * 4
+
+    if len(source) <= max_chars:
+        # File fits in one chunk — return as-is
+        context = _extract_class_header(source)
+        return [JavaChunk(source, context, 1, 1, filepath, _extract_class_name(source))]
+
+    context = _extract_class_header(source)
+    methods = _split_at_methods(source)
+
+    chunks = []
+    current = context + "\n\n"
+    for method in methods:
+        if len(current) + len(method) > max_chars and current.strip() != context.strip():
+            chunks.append(current.strip())
+            current = context + "\n\n" + method
+        else:
+            current += "\n\n" + method
+
+    if current.strip() and current.strip() != context.strip():
+        chunks.append(current.strip())
+
+    class_name = _extract_class_name(source)
+    total = len(chunks)
+    return [
+        JavaChunk(code, context, i+1, total, filepath, class_name)
+        for i, code in enumerate(chunks)
+    ]
+```
+
+### Helper functions
+
+```python
+def _extract_class_header(source: str) -> str:
+    """Return everything up to and including the class/interface declaration line."""
+    lines = source.splitlines()
+    header = []
+    in_class = False
+    for line in lines:
+        header.append(line)
+        if re.match(r'\s*(public|private|protected)?\s*(abstract\s+)?(class|interface|enum)\s+\w+', line):
+            header.append("    // ... methods below ...")
+            in_class = True
+            break
+    return "\n".join(header) if in_class else "\n".join(lines[:20])
+
+def _extract_class_name(source: str) -> str:
+    m = re.search(r'(class|interface|enum)\s+(\w+)', source)
+    return m.group(2) if m else "Unknown"
+
+def _split_at_methods(source: str) -> list[str]:
+    """
+    Split source into method blocks.
+    Uses brace-depth tracking to find top-level method boundaries.
+    """
+    lines    = source.splitlines()
+    methods  = []
+    current  = []
+    depth    = 0
+    in_method = False
+
+    METHOD_START = re.compile(
+        r'\s*(public|private|protected|static|final|abstract|synchronized)'
+        r'.*\w+\s*\(.*\)\s*(throws\s+\w+.*)?\s*\{'
+    )
+
+    for line in lines:
+        depth += line.count("{") - line.count("}")
+        if METHOD_START.match(line) and depth == 1:
+            if current:
+                methods.append("\n".join(current))
+            current = [line]
+            in_method = True
+        elif in_method:
+            current.append(line)
+            if depth == 0:
+                methods.append("\n".join(current))
+                current = []
+                in_method = False
+        else:
+            current.append(line)
+
+    if current:
+        methods.append("\n".join(current))
+
+    return [m for m in methods if m.strip()]
+```
+
+---
+
+## 2. `core/prompt_builder.py`
+
+```python
+from pathlib import Path
+
+class PromptBuilder:
+    def __init__(self, prompts_dir: str = "prompts"):
+        self.dir = Path(prompts_dir)
+
+    def build(self, template_name: str, variables: dict) -> str:
+        """
+        Load prompts/{template_name}.txt and fill {variable} placeholders.
+        Raises KeyError if a required variable is missing from `variables`.
+        """
+        template = (self.dir / f"{template_name}.txt").read_text()
+        # Find all {placeholders}
+        import re
+        required = set(re.findall(r'\{(\w+)\}', template))
+        missing = required - set(variables.keys())
+        if missing:
+            raise KeyError(f"Missing prompt variables for '{template_name}': {missing}")
+        return template.format(**variables)
+```
+
+### Prompt files (stored in `prompts/*.txt`)
+| File | Used by |
+|------|---------|
+| `prompts/migration.txt` | Migration Agent |
+| `prompts/validation.txt` | Validation Agent |
+| `prompts/test_gen.txt` | Test Generation Agent |
+| `prompts/doc_gen.txt` | Documentation Agent |
+
+See each agent's skill file for the full prompt template content.
+
+---
+
+## 3. `core/file_utils.py`
+
+```python
+import re
+from pathlib import Path
+
+def java_path_to_python_path(java_rel_path: str) -> str:
+    """
+    Convert a relative Java file path to a Python module path.
+    Examples:
+      src/main/java/org/example/FooService.java → org/example/foo_service.py
+      src/org/example/Bar.java                  → org/example/bar.py
+    """
+    p = Path(java_rel_path)
+    parts = list(p.parts)
+    for prefix in [["src","main","java"], ["src","java"], ["src"]]:
+        if parts[:len(prefix)] == prefix:
+            parts = parts[len(prefix):]
+            break
+    stem = _camel_to_snake(p.stem)
+    parts[-1] = stem + ".py"
+    return str(Path(*parts))
+
+def _camel_to_snake(name: str) -> str:
+    s1 = re.sub(r'(.)([A-Z][a-z]+)', r'\1_\2', name)
+    return re.sub(r'([a-z0-9])([A-Z])', r'\1_\2', s1).lower()
+
+def java_package_to_python_module(package: str) -> str:
+    """org.apache.commons.lang3 → org.apache.commons.lang3  (dots stay as dots)"""
+    return package  # Python module path uses same dot notation
+
+def write_python_file(abs_path: str, content: str) -> None:
+    """Create parent directories and write a Python file."""
+    p = Path(abs_path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(content, encoding="utf-8")
+
+def scan_java_files(root_dir: str) -> list[str]:
+    """Return all .java file paths under root_dir."""
+    return [str(p) for p in Path(root_dir).rglob("*.java")]
+
+def parse_pom_xml(pom_path: str) -> list[dict]:
+    """Extract Maven dependencies as list of {groupId, artifactId, version}."""
+    import xml.etree.ElementTree as ET
+    tree = ET.parse(pom_path)
+    ns   = {"m": "http://maven.apache.org/POM/4.0.0"}
+    deps = []
+    for dep in tree.findall(".//m:dependency", ns):
+        deps.append({
+            "groupId":    dep.findtext("m:groupId",    "", ns),
+            "artifactId": dep.findtext("m:artifactId", "", ns),
+            "version":    dep.findtext("m:version",    "?", ns),
+        })
+    return deps
+
+def parse_build_gradle(gradle_path: str) -> list[dict]:
+    """Extract Gradle dependencies via regex."""
+    text = Path(gradle_path).read_text(errors="replace")
+    pattern = re.compile(
+        r'''(?:implementation|compile|testImplementation|api)\s+['"]([^'"]+)['"]'''
+    )
+    results = []
+    for match in pattern.finditer(text):
+        coord = match.group(1)   # e.g. "org.junit.jupiter:junit-jupiter:5.10.0"
+        parts = coord.split(":")
+        results.append({
+            "groupId":    parts[0] if len(parts) > 0 else "",
+            "artifactId": parts[1] if len(parts) > 1 else "",
+            "version":    parts[2] if len(parts) > 2 else "?",
+        })
+    return results
+
+def save_state(output_dir: str, filename: str, data: dict) -> None:
+    """Save a state JSON file to output/state/."""
+    import json
+    path = Path(output_dir) / "state" / filename
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+def load_state(output_dir: str, filename: str) -> dict:
+    """Load a state JSON file. Returns {} if not found."""
+    import json
+    path = Path(output_dir) / "state" / filename
+    if not path.exists():
+        return {}
+    return json.loads(path.read_text())
+```
+
+---
+
+## CamelCase → snake_case conversion table (quick reference)
+| Java | Python |
+|------|--------|
+| `StringUtils.java` | `string_utils.py` |
+| `UserService.java` | `user_service.py` |
+| `HTTPClient.java` | `h_t_t_p_client.py` → manually fix to `http_client.py` |
+| `OrderRepo.java` | `order_repo.py` |
+| `MyXMLParser.java` | `my_x_m_l_parser.py` → fix to `my_xml_parser.py` |
+
+> **Note for AI builder:** The regex CamelCase splitter has edge cases with
+> consecutive capitals (HTTP, XML, API). After converting, run a post-process
+> check that collapses `_x_m_l_` → `_xml_` etc. using a known-acronyms list.
+
+
+===== SKILL: llm-client =====
+
+---
+name: llm-client
+description: >
+  Use this skill whenever any agent in the Java→Python migration pipeline needs
+  to call an LLM. This skill defines the ONLY way LLMs are called in the
+  project — through core/llm_client.py. Triggers whenever implementing or
+  modifying LLM calls, adding a new provider (Groq, HuggingFace, Ollama,
+  OpenAI), handling retries, or parsing JSON responses from an LLM. No agent
+  code should ever import an LLM SDK directly — always route through LLMClient.
+---
+
+# LLM Client Skill
+
+Single unified interface for all LLM calls in the pipeline.
+**Rule: Every LLM call in every agent goes through this class. No exceptions.**
+
+## Supported Providers
+| Provider | `LLM_PROVIDER` value | Free tier | Best model for code |
+|----------|----------------------|-----------|---------------------|
+| Groq | `groq` | Yes — fast | `llama3-70b-8192` |
+| HuggingFace | `huggingface` | Yes | `Qwen/Qwen2.5-Coder-32B-Instruct` |
+| Ollama | `ollama` | Local/offline | `deepseek-coder-v2:16b` |
+| OpenAI-compat | `openai` | Paid / local | `gpt-4o-mini` or any local |
+
+---
+
+## Implementation: `core/llm_client.py`
+
+```python
+import os, json, time, logging
+from typing import Any
+
+logger = logging.getLogger(__name__)
+
+class LLMClient:
+    """
+    Unified LLM interface. Reads LLM_PROVIDER from environment.
+    All agents import and use ONLY this class for LLM calls.
+    """
+
+    PROVIDER_DEFAULTS = {
+        "groq":         {"model": "llama3-70b-8192",
+                         "base_url": "https://api.groq.com/openai/v1"},
+        "huggingface":  {"model": "Qwen/Qwen2.5-Coder-32B-Instruct",
+                         "base_url": "https://api-inference.huggingface.co/v1"},
+        "ollama":       {"model": "deepseek-coder-v2:16b",
+                         "base_url": "http://localhost:11434/v1"},
+        "openai":       {"model": "gpt-4o-mini",
+                         "base_url": "https://api.openai.com/v1"},
+    }
+
+    def __init__(self, model: str = None, temperature: float = 0.2,
+                 max_tokens: int = 4096, retry_attempts: int = 3):
+        self.provider    = os.getenv("LLM_PROVIDER", "groq").lower()
+        self.temperature = temperature
+        self.max_tokens  = max_tokens
+        self.retries     = retry_attempts
+
+        defaults = self.PROVIDER_DEFAULTS.get(self.provider, {})
+        self.model    = model or os.getenv("LLM_MODEL") or defaults.get("model")
+        self.base_url = os.getenv("LLM_BASE_URL") or defaults.get("base_url")
+
+        self._client = self._build_client()
+
+    def _build_client(self):
+        """Return an openai-compatible client for the selected provider."""
+        from openai import OpenAI
+        api_key = self._get_api_key()
+        return OpenAI(api_key=api_key, base_url=self.base_url)
+
+    def _get_api_key(self) -> str:
+        KEY_MAP = {
+            "groq":        "GROQ_API_KEY",
+            "huggingface": "HF_API_KEY",
+            "openai":      "OPENAI_API_KEY",
+            "ollama":      None,   # no key needed
+        }
+        env_var = KEY_MAP.get(self.provider)
+        if env_var is None:
+            return "ollama"   # Ollama accepts any non-empty string
+        key = os.getenv(env_var)
+        if not key:
+            raise EnvironmentError(
+                f"Provider '{self.provider}' requires {env_var} env variable.\n"
+                f"Set it with: export {env_var}=your_key_here"
+            )
+        return key
+
+    # ── Public API ───────────────────────────────────────────────────────────
+
+    def complete(self, system_prompt: str, user_prompt: str) -> str:
+        """
+        Send a chat completion request. Returns the response as a plain string.
+        Retries up to self.retries times with exponential backoff.
+        """
+        for attempt in range(self.retries):
+            try:
+                resp = self._client.chat.completions.create(
+                    model=self.model,
+                    temperature=self.temperature,
+                    max_tokens=self.max_tokens,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user",   "content": user_prompt},
+                    ]
+                )
+                return resp.choices[0].message.content.strip()
+            except Exception as e:
+                if attempt == self.retries - 1:
+                    raise
+                wait = 2 ** attempt
+                logger.warning(f"LLM call failed (attempt {attempt+1}): {e}. Retrying in {wait}s...")
+                time.sleep(wait)
+
+    def complete_json(self, system_prompt: str, user_prompt: str) -> dict:
+        """
+        Like complete(), but parses the response as JSON.
+        Strips markdown fences if the model wraps the JSON in ```json ... ```.
+        Retries up to self.retries times if response is not valid JSON.
+        """
+        for attempt in range(self.retries):
+            try:
+                raw = self.complete(system_prompt, user_prompt)
+                clean = self._strip_fences(raw)
+                return json.loads(clean)
+            except json.JSONDecodeError as e:
+                if attempt == self.retries - 1:
+                    raise RuntimeError(
+                        f"LLM returned invalid JSON after {self.retries} attempts.\n"
+                        f"Last response:\n{raw}"
+                    ) from e
+                logger.warning(f"JSON parse failed (attempt {attempt+1}): {e}. Retrying...")
+                time.sleep(2 ** attempt)
+
+    # ── Helpers ──────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _strip_fences(text: str) -> str:
+        """Remove ```json ... ``` or ``` ... ``` wrappers from LLM output."""
+        text = text.strip()
+        if text.startswith("```"):
+            text = text.split("\n", 1)[-1]   # remove first line (```json)
+        if text.endswith("```"):
+            text = text.rsplit("```", 1)[0]  # remove trailing fence
+        return text.strip()
+```
+
+---
+
+## How Agents Use LLMClient
+
+```python
+# In any agent — this is the ONLY import pattern allowed
+from core.llm_client import LLMClient
+
+class MigrationAgent:
+    def __init__(self, manifest: dict, llm: LLMClient, output_dir: str):
+        self.llm = llm   # injected by orchestrator
+
+    def _convert_file(self, java_code: str, context: str) -> str:
+        system = self.prompt_builder.build("migration", {...})
+        return self.llm.complete(system, java_code)   # ← only call needed
+
+    def _validate_file(self, java: str, python: str) -> dict:
+        system = self.prompt_builder.build("validation", {...})
+        return self.llm.complete_json(system, java + "\n\n" + python)
+```
+
+---
+
+## Environment Setup
+
+### Groq (fastest, recommended)
+```bash
+export LLM_PROVIDER=groq
+export GROQ_API_KEY=gsk_xxxx   # from console.groq.com
+```
+
+### HuggingFace
+```bash
+export LLM_PROVIDER=huggingface
+export HF_API_KEY=hf_xxxx      # from huggingface.co/settings/tokens
+```
+
+### Ollama (local, no key)
+```bash
+ollama pull deepseek-coder-v2:16b
+export LLM_PROVIDER=ollama
+# OLLAMA_BASE_URL defaults to http://localhost:11434/v1
+```
+
+### Override model at runtime
+```bash
+export LLM_MODEL=mixtral-8x7b-32768   # overrides provider default
+# or via CLI:
+python run.py --repo <url> --model mixtral-8x7b-32768
+```
+
+---
+
+## config.yaml Mapping
+```yaml
+llm:
+  provider: groq             # reads LLM_PROVIDER env if not set
+  model: llama3-70b-8192    # reads LLM_MODEL env if not set
+  temperature: 0.2
+  max_tokens: 4096
+  retry_attempts: 3
+  retry_backoff_seconds: 2
+```
+
+## Instantiation in Orchestrator
+```python
+from core.llm_client import LLMClient
+import yaml
+
+cfg = yaml.safe_load(open("config.yaml"))["llm"]
+llm = LLMClient(
+    model=args.model or cfg.get("model"),
+    temperature=cfg["temperature"],
+    max_tokens=cfg["max_tokens"],
+    retry_attempts=cfg["retry_attempts"],
+)
+# Pass `llm` into every agent constructor — never create a second instance
+```
+
+---
+
+## Error Reference
+| Error | Cause | Fix |
+|-------|-------|-----|
+| `EnvironmentError` | Missing API key env var | Set the correct `*_API_KEY` env var |
+| `RuntimeError: invalid JSON` | LLM returned prose instead of JSON | Prompt already instructs JSON-only; increase `retry_attempts` |
+| `openai.APIConnectionError` | Ollama not running | Run `ollama serve` first |
+| `openai.RateLimitError` | Groq/HF rate limit hit | Exponential backoff handles this automatically |
+
+
+===== SKILL: migration-agent =====
+
+---
+name: migration-agent
+description: >
+  Use this skill when implementing or running Agent 1 of the Java→Python
+  pipeline: the Migration Agent. This agent reads every .java file from the
+  project manifest, converts it to idiomatic Python using an LLM, applies
+  post-processing (black + flake8), writes the output Python project, and
+  produces the migration map. Triggers on any mention of "convert Java to
+  Python", "migration agent", "translate Java files", or "write the Python
+  project". Read this skill before writing agents/migration_agent.py or
+  prompts/migration.txt.
+---
+
+# Migration Agent Skill
+
+**File:** `agents/migration_agent.py`
+**Prompt:** `prompts/migration.txt`
+**Reads:** `output/state/project_manifest.json`
+**Writes:** `output/python_project/`, `output/reports/migration_map.json`, `output/state/migration_state.json`
+
+---
+
+## What this agent does
+
+For every `.java` file in the manifest:
+1. Load the file content
+2. Chunk it if > 300 lines (use `core/chunker.py`)
+3. Send each chunk to the LLM with the migration prompt
+4. Reassemble chunks into one Python module
+5. Post-process: `black` formatter + `flake8` linter
+6. Write to `output/python_project/` using the Python target path from manifest
+7. Log the result to `migration_map`
+
+After all files: generate `requirements.txt` from the dependency map.
+
+---
+
+## Implementation
+
+```python
+import subprocess, logging
+from pathlib import Path
+from core.llm_client import LLMClient
+from core.chunker import chunk_java_file
+from core.prompt_builder import PromptBuilder
+from core.file_utils import write_python_file, save_state
+
+logger = logging.getLogger(__name__)
+
+class MigrationAgent:
+    def __init__(self, manifest: dict, llm: LLMClient,
+                 output_dir: str = "output", emit=None):
+        self.manifest   = manifest
+        self.llm        = llm
+        self.output_dir = Path(output_dir)
+        self.emit       = emit or (lambda stage, msg: logger.info(f"[{stage}] {msg}"))
+        self.pb         = PromptBuilder()
+        self.migration_map = []
+
+    def run(self) -> dict:
+        """Run migration on all Java files. Returns migration_state dict."""
+        files = self.manifest["java_files"]
+        total = len(files)
+
+        for i, file_info in enumerate(files, 1):
+            self.emit("migration", f"Converting {file_info['class_name']} ({i}/{total})...")
+            try:
+                self._migrate_file(file_info)
+            except Exception as e:
+                logger.error(f"Failed to migrate {file_info['path']}: {e}")
+                self.migration_map.append({**file_info, "status": "error", "error": str(e)})
+
+        self._write_requirements()
+        state = {"migration_map": self.migration_map, "output_dir": str(self.output_dir)}
+        save_state(str(self.output_dir), "migration_state.json", state)
+        self.emit("migration", f"Done. {len(self.migration_map)} files processed.")
+        return state
+
+    def _migrate_file(self, file_info: dict):
+        abs_path = file_info["abs_path"]
+        py_target = str(self.output_dir) + "/" + file_info["python_target"].replace("output/","")
+
+        chunks = chunk_java_file(abs_path)
+        python_parts = []
+
+        for chunk in chunks:
+            system = self._build_system_prompt(chunk.context, chunk.chunk_index, chunk.total_chunks)
+            python_code = self.llm.complete(system, chunk.code)
+            python_parts.append(python_code)
+
+        full_python = self._reassemble(python_parts, file_info["class_name"])
+        full_python = self._post_process(full_python, py_target)
+        write_python_file(py_target, full_python)
+
+        self.migration_map.append({
+            **file_info,
+            "python_file": py_target,
+            "status": "complete",
+            "chunks": len(chunks),
+        })
+        self.emit("migration", f"  ✓ {file_info['class_name']} → {Path(py_target).name}")
+
+    def _build_system_prompt(self, context: str, chunk_idx: int, total: int) -> str:
+        # Load framework map from references
+        import json
+        fw_map = json.loads((Path(__file__).parent.parent /
+                             "references/framework_map.json").read_text())
+        return self.pb.build("migration", {
+            "class_context":  context,
+            "chunk_index":    chunk_idx,
+            "total_chunks":   total,
+            "framework_map":  json.dumps(fw_map, indent=2),
+        })
+
+    def _reassemble(self, parts: list[str], class_name: str) -> str:
+        """
+        Merge chunks back into one Python module.
+        De-duplicate import lines that appear in multiple chunks.
+        """
+        seen_imports = set()
+        imports = []
+        body    = []
+
+        for part in parts:
+            lines = part.splitlines()
+            for line in lines:
+                stripped = line.strip()
+                if stripped.startswith("import ") or stripped.startswith("from "):
+                    if stripped not in seen_imports:
+                        seen_imports.add(stripped)
+                        imports.append(line)
+                else:
+                    body.append(line)
+
+        return "\n".join(imports) + "\n\n" + "\n".join(body)
+
+    def _post_process(self, code: str, target_path: str) -> str:
+        """Run black formatter and flake8 linter. Return formatted code."""
+        import tempfile, os
+        with tempfile.NamedTemporaryFile(suffix=".py", mode="w",
+                                        delete=False, encoding="utf-8") as f:
+            f.write(code)
+            tmp = f.name
+        try:
+            # black format
+            subprocess.run(["black", "--quiet", tmp], check=False)
+            # flake8 check (log warnings, don't fail)
+            result = subprocess.run(["flake8", "--max-line-length=120", tmp],
+                                    capture_output=True, text=True)
+            if result.stdout:
+                logger.warning(f"flake8 warnings for {target_path}:\n{result.stdout}")
+            return Path(tmp).read_text(encoding="utf-8")
+        finally:
+            os.unlink(tmp)
+
+    def _write_requirements(self):
+        """Generate requirements.txt from the manifest dependency map."""
+        import json
+        dep_map = json.loads(
+            (Path(__file__).parent.parent /
+             "skills/github-ingestion/references/dependency_map.json").read_text()
+        )
+        deps = self.manifest.get("dependencies", [])
+        py_packages = set()
+        for dep in deps:
+            key = f"{dep['groupId']}:{dep['artifactId']}"
+            if key in dep_map:
+                py_packages.update(dep_map[key].split())
+
+        req_path = self.output_dir / "python_project" / "requirements.txt"
+        req_path.parent.mkdir(parents=True, exist_ok=True)
+        req_path.write_text("\n".join(sorted(py_packages)) + "\n")
+        self.emit("migration", f"  ✓ requirements.txt written ({len(py_packages)} packages)")
+```
+
+---
+
+## Migration Prompt Template (`prompts/migration.txt`)
+
+```
+You are an expert Java-to-Python migration engineer.
+Convert the Java code below to idiomatic Python 3.11+.
+
+STRICT RULES — follow all of them:
+1. Preserve ALL business logic exactly — do not add or remove behaviour
+2. Type-annotate every function parameter and return type (use typing module)
+3. Follow PEP 8 strictly
+4. Write Pythonic code: list comprehensions, context managers, dataclasses, generators
+5. Apply this framework mapping where relevant:
+{framework_map}
+6. Add a Google-style docstring to every class and every public method
+7. Replace null with None; convert checked exceptions to Python exception patterns
+8. Remove Java keywords: public, private, protected, static, final, void, new
+9. Convert interfaces to ABC subclasses; use @abstractmethod
+10. Do NOT transliterate Java style — write code as a Python developer would write it from scratch
+
+Class context (package, imports, class signature — for continuity across chunks):
+{class_context}
+
+This is chunk {chunk_index} of {total_chunks}.
+
+Java code to convert:
+```java
+[JAVA CODE IS PASSED AS THE USER MESSAGE]
+```
+
+Return ONLY the Python code. No explanations. No markdown fences. No preamble.
+```
+
+---
+
+## Framework Map Reference (`references/framework_map.json`)
+Read at: `skills/migration-agent/references/framework_map.json`
+
+Contains Java framework → Python equivalent mappings injected into every prompt.
+See the reference file for the full table.
+
+---
+
+## Post-Processing Rules
+| Check | Tool | Action on failure |
+|-------|------|-------------------|
+| Formatting | `black` | Auto-fix (in-place) |
+| Linting | `flake8 --max-line-length=120` | Log warning, continue |
+| Syntax valid | `python -m py_compile` | Log error, mark file as `needs_review` |
+
+---
+
+## Migration State Schema (`output/state/migration_state.json`)
+```json
+{
+  "output_dir": "output",
+  "migration_map": [
+    {
+      "class_name": "StringUtils",
+      "path": "src/main/java/org/apache/commons/lang3/StringUtils.java",
+      "python_file": "output/python_project/org/apache/commons/lang3/string_utils.py",
+      "lines": 847,
+      "chunks": 4,
+      "status": "complete"
+    }
+  ]
+}
+```
+
+## Status values
+| Status | Meaning |
+|--------|---------|
+| `complete` | Migrated, formatted, linted OK |
+| `needs_review` | Syntax errors in output; flagged for manual check |
+| `error` | LLM call or file I/O failed entirely |
+| `skipped` | File excluded (e.g. generated code, test-only) |
+
+
+===== SKILL: orchestrator =====
+
+---
+name: orchestrator
+description: >
+  Use this skill when implementing run.py and orchestrator.py — the main entry
+  points that coordinate all four agents in the Java→Python migration pipeline.
+  Triggers on any mention of "main entry point", "CLI interface", "run the
+  pipeline", "orchestrate agents", "run.py", "orchestrator.py", or "wire up
+  the agents". This skill defines the CLI flags, config loading, agent
+  sequencing, progress event system, and state management between agents.
+---
+
+# Orchestrator Skill
+
+Two files:
+- `run.py` — CLI entry point (thin wrapper, parses args, calls orchestrator)
+- `orchestrator.py` — coordinates all agents, manages state, emits progress
+
+---
+
+## `run.py` — CLI Entry Point
+
+```python
+#!/usr/bin/env python3
+"""
+Java → Python AI Migration Suite
+Usage: python run.py --repo https://github.com/user/repo [options]
+"""
+import click
+import yaml
+from pathlib import Path
+from orchestrator import Orchestrator
+
+@click.command()
+@click.option("--repo",       required=True,  help="GitHub repo URL to migrate")
+@click.option("--output-dir", default="output", show_default=True, help="Output directory")
+@click.option("--agent",      default="all",
+              type=click.Choice(["all","migration","validation","tests","docs"]),
+              help="Run only one agent (default: all)")
+@click.option("--model",      default=None,   help="Override LLM model name")
+@click.option("--branch",     default=None,   help="Git branch to clone")
+@click.option("--verbose",    is_flag=True,   help="Print LLM prompts and responses")
+@click.option("--config",     default="config.yaml", help="Path to config file")
+def main(repo, output_dir, agent, model, branch, verbose, config):
+    cfg = _load_config(config)
+    if model:
+        cfg["llm"]["model"] = model
+
+    agents_to_run = (
+        ["migration","validation","tests","docs"] if agent == "all" else [agent]
+    )
+
+    orchestrator = Orchestrator(
+        repo_url     = repo,
+        output_dir   = output_dir,
+        agents       = agents_to_run,
+        llm_config   = cfg["llm"],
+        branch       = branch,
+        verbose      = verbose,
+    )
+    orchestrator.run()
+
+def _load_config(config_path: str) -> dict:
+    path = Path(config_path)
+    if not path.exists():
+        return {"llm": {"provider": "groq", "temperature": 0.2, "max_tokens": 4096, "retry_attempts": 3}}
+    return yaml.safe_load(path.read_text())
+
+if __name__ == "__main__":
+    main()
+```
+
+---
+
+## `orchestrator.py`
+
+```python
+import logging
+from pathlib import Path
+from rich.console import Console
+from rich.progress import Progress, SpinnerColumn, TextColumn
+from core.llm_client import LLMClient
+from core.github_ingestion import GitHubIngestion
+from core.file_utils import save_state, load_state
+from agents.migration_agent   import MigrationAgent
+from agents.validation_agent  import ValidationAgent
+from agents.test_gen_agent    import TestGenAgent
+from agents.doc_agent         import DocAgent
+
+console = Console()
+logger  = logging.getLogger(__name__)
+
+class Orchestrator:
+    def __init__(self, repo_url: str, output_dir: str, agents: list[str],
+                 llm_config: dict, branch: str = None, verbose: bool = False):
+        self.repo_url   = repo_url
+        self.output_dir = output_dir
+        self.agents     = agents
+        self.branch     = branch
+        self.verbose    = verbose
+
+        # Build LLM client once; pass to all agents
+        import os
+        if llm_config.get("provider"):
+            os.environ.setdefault("LLM_PROVIDER", llm_config["provider"])
+        self.llm = LLMClient(
+            model          = llm_config.get("model"),
+            temperature    = llm_config.get("temperature", 0.2),
+            max_tokens     = llm_config.get("max_tokens", 4096),
+            retry_attempts = llm_config.get("retry_attempts", 3),
+        )
+        self._progress_callbacks = []   # registered by web UI
+
+    # ── Progress event system ─────────────────────────────────────────────────
+
+    def register_progress_callback(self, callback):
+        """Web UI registers here to receive (stage, message) tuples."""
+        self._progress_callbacks.append(callback)
+
+    def _emit(self, stage: str, message: str):
+        """Emit progress to CLI (rich) and any registered callbacks (web UI)."""
+        console.print(f"[bold cyan][{stage}][/bold cyan] {message}")
+        for cb in self._progress_callbacks:
+            try:
+                cb(stage, message)
+            except Exception:
+                pass
+
+    # ── Main pipeline ─────────────────────────────────────────────────────────
+
+    def run(self):
+        ingestion = None
+        try:
+            # Step 0: Clone + manifest
+            self._emit("ingest", f"Cloning {self.repo_url}...")
+            ingestion = GitHubIngestion(
+                repo_url   = self.repo_url,
+                branch     = self.branch,
+                output_dir = self.output_dir,
+            )
+            manifest = ingestion.run()
+            self._emit("ingest", f"Found {manifest['total_java_files']} Java files "
+                                 f"({manifest['total_lines']:,} lines)")
+
+            migration_state  = load_state(self.output_dir, "migration_state.json")
+            validation_state = load_state(self.output_dir, "validation_state.json")
+            test_state       = load_state(self.output_dir, "test_state.json")
+
+            # Step 1: Migration
+            if "migration" in self.agents:
+                agent = MigrationAgent(manifest, self.llm, self.output_dir, self._emit)
+                migration_state = agent.run()
+
+            # Step 2: Validation
+            if "validation" in self.agents:
+                if not migration_state:
+                    console.print("[yellow]Warning: no migration state found. Run migration first.[/yellow]")
+                else:
+                    agent = ValidationAgent(manifest, migration_state, self.llm, self.output_dir, self._emit)
+                    validation_state = agent.run()
+
+            # Step 3: Tests
+            if "tests" in self.agents:
+                agent = TestGenAgent(manifest, migration_state, validation_state,
+                                     self.llm, self.output_dir, self._emit)
+                test_state = agent.run()
+
+            # Step 4: Docs
+            if "docs" in self.agents:
+                agent = DocAgent(manifest, migration_state, validation_state,
+                                 test_state, self.llm, self.output_dir, self._emit)
+                agent.run()
+
+            self._print_summary(manifest, validation_state, test_state)
+
+        except KeyboardInterrupt:
+            console.print("\n[yellow]Pipeline interrupted by user.[/yellow]")
+        except Exception as e:
+            console.print(f"[red]Pipeline failed: {e}[/red]")
+            logger.exception("Pipeline error")
+            raise
+        finally:
+            if ingestion:
+                ingestion.cleanup()
+
+    def _print_summary(self, manifest, validation_state, test_state):
+        console.print("\n[bold green]═══ Pipeline Complete ═══[/bold green]")
+        console.print(f"  Repo:        {manifest['repo_url']}")
+        console.print(f"  Java files:  {manifest['total_java_files']}")
+        if validation_state:
+            r = validation_state.get("report", {})
+            console.print(f"  Score:       {r.get('equivalence_score','?')}/100 — {r.get('status','?')}")
+        if test_state:
+            total = sum(c.get("test_count",0) for c in test_state.get("coverage_map",[]))
+            console.print(f"  Tests:       {total} test cases generated")
+        console.print(f"  Output:      {self.output_dir}/")
+        console.print(f"  HTML report: {self.output_dir}/docs/full_report.html")
+```
+
+---
+
+## `config.yaml`
+
+```yaml
+llm:
+  provider: groq              # groq | huggingface | ollama | openai
+  model: llama3-70b-8192     # provider default used if omitted
+  temperature: 0.2
+  max_tokens: 4096
+  retry_attempts: 3
+
+chunker:
+  max_tokens_per_chunk: 3000
+  split_strategy: method_boundary
+
+agents:
+  migration: true
+  validation: true
+  test_generation: true
+  documentation: true
+
+output:
+  base_dir: ./output
+```
+
+---
+
+## CLI Quick Reference
+
+```bash
+# Full pipeline
+python run.py --repo https://github.com/apache/commons-lang
+
+# Single agent
+python run.py --repo https://github.com/user/repo --agent migration
+python run.py --repo https://github.com/user/repo --agent validation
+
+# Override model
+python run.py --repo https://github.com/user/repo --model mixtral-8x7b-32768
+
+# Different branch + output dir
+python run.py --repo https://github.com/user/repo --branch develop --output-dir ./my_output
+
+# Debug mode
+python run.py --repo https://github.com/user/repo --verbose
+```
+
+---
+
+## State File Flow
+```
+output/state/
+├── project_manifest.json    ← written by GitHubIngestion
+├── migration_state.json     ← written by MigrationAgent,  read by ValidationAgent, TestGenAgent, DocAgent
+├── validation_state.json    ← written by ValidationAgent, read by TestGenAgent, DocAgent
+└── test_state.json          ← written by TestGenAgent,    read by DocAgent
+```
+
+**Resume behaviour:** If a state file already exists on disk, the orchestrator
+loads it instead of re-running that agent. This means you can run migration,
+fix issues, then run `--agent validation` without re-migrating everything.
+
+
+===== SKILL: test-gen-agent =====
+
+---
+name: test-gen-agent
+description: >
+  Use this skill when implementing or running Agent 3 of the Java→Python
+  pipeline: the Test Generation Agent. This agent generates complete pytest
+  test suites for the migrated Python code and JUnit 5 test suites for the
+  original Java code, with cross-language parity. Triggers on any mention of
+  "generate tests", "write unit tests", "pytest generation", "JUnit tests",
+  "test coverage", or "test generation agent". Read this skill before writing
+  agents/test_gen_agent.py or prompts/test_gen.txt.
+---
+
+# Test Generation Agent Skill
+
+**File:** `agents/test_gen_agent.py`
+**Prompt:** `prompts/test_gen.txt`
+**Reads:** `output/state/migration_state.json`, `output/state/validation_state.json`
+**Writes:** `output/tests/java/`, `output/tests/python/`, `output/reports/test_coverage_map.json`, `output/state/test_state.json`
+
+---
+
+## What this agent does
+
+For every Java/Python file pair:
+1. Load both source files + any mismatches from validation report
+2. Send to LLM with test generation prompt
+3. Parse response: extract Java tests + Python tests
+4. Write Java tests to `output/tests/java/`
+5. Write Python tests to `output/tests/python/`
+6. Verify Python tests parse with `pytest --collect-only`
+7. Build test coverage map
+
+---
+
+## Implementation
+
+```python
+import subprocess, logging, json
+from pathlib import Path
+from core.llm_client import LLMClient
+from core.prompt_builder import PromptBuilder
+from core.file_utils import write_python_file, save_state
+
+logger = logging.getLogger(__name__)
+
+class TestGenAgent:
+    def __init__(self, manifest: dict, migration_state: dict,
+                 validation_state: dict, llm: LLMClient,
+                 output_dir: str = "output", emit=None):
+        self.manifest          = manifest
+        self.migration_state   = migration_state
+        self.validation_state  = validation_state
+        self.llm               = llm
+        self.output_dir        = Path(output_dir)
+        self.emit              = emit or (lambda s, m: logger.info(f"[{s}] {m}"))
+        self.pb                = PromptBuilder()
+        self.coverage_map      = []
+
+    def run(self) -> dict:
+        migration_map = self.migration_state["migration_map"]
+        validation_report = self.validation_state.get("report", {})
+        mismatches_by_file = self._index_mismatches(validation_report)
+
+        completed = [f for f in migration_map if f["status"] == "complete"]
+        total = len(completed)
+
+        for i, file_info in enumerate(completed, 1):
+            self.emit("tests", f"Generating tests for {file_info['class_name']} ({i}/{total})...")
+            self._generate_tests(file_info, mismatches_by_file.get(file_info["class_name"], []))
+
+        self._write_coverage_map()
+        state = {"coverage_map": self.coverage_map, "output_dir": str(self.output_dir)}
+        save_state(str(self.output_dir), "test_state.json", state)
+        total_tests = sum(c.get("test_count", 0) for c in self.coverage_map)
+        self.emit("tests", f"Done. {total_tests} test cases generated across {len(completed)} modules.")
+        return state
+
+    def _generate_tests(self, file_info: dict, mismatches: list):
+        java_code = Path(file_info["abs_path"]).read_text(errors="replace")
+        py_code   = Path(file_info["python_file"]).read_text(errors="replace")
+
+        system = self.pb.build("test_gen", {
+            "mismatches": json.dumps(mismatches, indent=2) if mismatches else "None",
+        })
+        user = (f"### Java class: {file_info['class_name']}\n{java_code}\n\n"
+                f"### Python module:\n{py_code}")
+
+        try:
+            result = self.llm.complete_json(system, user)
+            java_tests   = result.get("java_tests", "")
+            python_tests = result.get("python_tests", "")
+        except Exception as e:
+            logger.error(f"Test gen failed for {file_info['class_name']}: {e}")
+            self.coverage_map.append({**file_info, "status": "error", "test_count": 0})
+            return
+
+        # Write Java tests
+        java_path = self.output_dir / "tests" / "java" / f"Test{file_info['class_name']}.java"
+        java_path.parent.mkdir(parents=True, exist_ok=True)
+        java_path.write_text(java_tests, encoding="utf-8")
+
+        # Write Python tests
+        from core.file_utils import java_path_to_python_path
+        py_test_name = "test_" + Path(file_info["python_file"]).name
+        py_test_path = self.output_dir / "tests" / "python" / py_test_name
+        write_python_file(str(py_test_path), python_tests)
+
+        # Validate Python tests parse correctly
+        valid, error = self._verify_pytest_collect(str(py_test_path))
+        test_count   = python_tests.count("def test_")
+
+        self.coverage_map.append({
+            "class_name":   file_info["class_name"],
+            "java_tests":   str(java_path),
+            "python_tests": str(py_test_path),
+            "test_count":   test_count,
+            "status":       "valid" if valid else "parse_error",
+            "parse_error":  error if not valid else None,
+        })
+        self.emit("tests", f"  ✓ {file_info['class_name']}: {test_count} test cases")
+
+    def _verify_pytest_collect(self, py_test_path: str) -> tuple[bool, str | None]:
+        """Run pytest --collect-only to check syntax without executing."""
+        result = subprocess.run(
+            ["pytest", "--collect-only", "-q", py_test_path],
+            capture_output=True, text=True
+        )
+        if result.returncode != 0 and "ERROR" in result.stdout + result.stderr:
+            return False, result.stderr[:500]
+        return True, None
+
+    def _index_mismatches(self, report: dict) -> dict:
+        """Group mismatches by class name for fast lookup."""
+        index = {}
+        for m in report.get("mismatches", []):
+            loc = m.get("location", "")
+            class_name = loc.split(".java")[0].split("/")[-1] if ".java" in loc else "unknown"
+            index.setdefault(class_name, []).append(m)
+        return index
+
+    def _write_coverage_map(self):
+        path = self.output_dir / "reports" / "test_coverage_map.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(self.coverage_map, indent=2))
+```
+
+---
+
+## Test Generation Prompt (`prompts/test_gen.txt`)
+
+```
+You are a senior test engineer expert in Java (JUnit 5, Mockito) and Python (pytest, unittest.mock).
+Generate comprehensive unit tests for the Java class and Python module provided by the user.
+
+Requirements:
+1. Target 80-100% branch coverage
+2. Include ALL of these test types:
+   - Happy path: normal inputs → expected outputs
+   - Edge cases: empty string, zero, None/null, boundary values, max/min int
+   - Error cases: invalid input → expected exception with correct message
+   - Mocked dependencies: mock all external services, DBs, HTTP calls
+3. Ensure cross-language parity — same test scenarios in both Java and Python
+4. Use descriptive test method names: test_should_<action>_when_<condition>()
+5. Java: use @Test, @BeforeEach, @Mock (Mockito), assertThrows(), assertEquals()
+6. Python: use def test_*(), pytest.raises(), assert, unittest.mock.patch
+7. Do NOT make real network or database calls in any test
+8. Generate regression tests for these known mismatches (one test per mismatch):
+{mismatches}
+
+Return ONLY a JSON object with exactly these two keys:
+{
+  "java_tests": "complete JUnit 5 test class as a string",
+  "python_tests": "complete pytest test module as a string"
+}
+No prose. No markdown fences around the outer JSON. The code strings inside may contain any characters.
+```
+
+---
+
+## Test Naming Conventions
+
+### Python (pytest)
+```python
+def test_should_return_empty_string_when_input_is_none():
+def test_should_raise_value_error_when_count_is_negative():
+def test_should_join_list_with_separator():
+```
+
+### Java (JUnit 5)
+```java
+@Test
+void shouldReturnEmptyStringWhenInputIsNull() { }
+@Test
+void shouldRaiseExceptionWhenCountIsNegative() { }
+```
+
+---
+
+## Required Test Structure (Python)
+
+```python
+import pytest
+from unittest.mock import patch, MagicMock, call
+from <module_path> import <ClassName>
+
+class Test<ClassName>:
+
+    def setup_method(self):
+        """Runs before each test."""
+        self.obj = <ClassName>()
+
+    # ── Happy path ──────────────────────────────────────────────
+    def test_should_<action>_when_<normal_condition>(self):
+        result = self.obj.<method>(<normal_input>)
+        assert result == <expected>
+
+    # ── Edge cases ───────────────────────────────────────────────
+    def test_should_handle_none_input(self):
+        assert self.obj.<method>(None) == <expected_for_none>
+
+    def test_should_handle_empty_string(self):
+        assert self.obj.<method>("") == <expected_for_empty>
+
+    # ── Error cases ───────────────────────────────────────────────
+    def test_should_raise_<error>_when_<bad_condition>(self):
+        with pytest.raises(<ErrorType>, match="<message fragment>"):
+            self.obj.<method>(<bad_input>)
+
+    # ── Mocked dependencies ───────────────────────────────────────
+    @patch("<module_path>.<ExternalService>")
+    def test_should_call_service_with_correct_args(self, mock_service):
+        mock_service.return_value.do_thing.return_value = "mocked"
+        result = self.obj.<method_that_uses_service>()
+        mock_service.return_value.do_thing.assert_called_once_with(...)
+```
+
+---
+
+## Coverage Map Schema
+```json
+[
+  {
+    "class_name": "StringUtils",
+    "java_tests": "output/tests/java/TestStringUtils.java",
+    "python_tests": "output/tests/python/test_string_utils.py",
+    "test_count": 14,
+    "status": "valid"
+  }
+]
+```
+
+## Status values
+| Status | Meaning |
+|--------|---------|
+| `valid` | pytest --collect-only passed, tests are parseable |
+| `parse_error` | Test file has syntax errors; see `parse_error` field |
+| `error` | LLM call failed entirely |
+
+
+===== SKILL: validation-agent =====
+
+---
+name: validation-agent
+description: >
+  Use this skill when implementing or running Agent 2 of the Java→Python
+  pipeline: the Validation Agent. This agent compares each Java source file
+  with its migrated Python equivalent, detects logic mismatches, computes an
+  equivalence score, and outputs a structured validation report. Triggers on
+  any mention of "validate migration", "check equivalence", "compare Java and
+  Python", "find mismatches", or "validation report". Read this skill before
+  writing agents/validation_agent.py or prompts/validation.txt.
+---
+
+# Validation Agent Skill
+
+**File:** `agents/validation_agent.py`
+**Prompt:** `prompts/validation.txt`
+**Reads:** `output/state/migration_state.json`, original Java files
+**Writes:** `output/reports/validation_report.json`, `output/docs/validation_report.md`, `output/state/validation_state.json`
+
+---
+
+## What this agent does
+
+For every Java/Python file pair from the migration map:
+1. Load both the original Java file and the migrated Python file
+2. Send both to the LLM with the validation prompt
+3. Parse the structured mismatch response
+4. If both are executable Python files: optionally run basic dynamic checks
+5. Aggregate mismatches; compute equivalence score
+6. Write the validation report
+
+---
+
+## Implementation
+
+```python
+import logging, json
+from pathlib import Path
+from core.llm_client import LLMClient
+from core.prompt_builder import PromptBuilder
+from core.file_utils import save_state
+
+logger = logging.getLogger(__name__)
+
+class ValidationAgent:
+    def __init__(self, manifest: dict, migration_state: dict,
+                 llm: LLMClient, output_dir: str = "output", emit=None):
+        self.manifest        = manifest
+        self.migration_state = migration_state
+        self.llm             = llm
+        self.output_dir      = Path(output_dir)
+        self.emit            = emit or (lambda s, m: logger.info(f"[{s}] {m}"))
+        self.pb              = PromptBuilder()
+        self.all_mismatches  = []
+        self.results         = []
+
+    def run(self) -> dict:
+        migration_map = self.migration_state["migration_map"]
+        completed = [f for f in migration_map if f["status"] == "complete"]
+        total = len(completed)
+
+        for i, file_info in enumerate(completed, 1):
+            self.emit("validation", f"Checking {file_info['class_name']} ({i}/{total})...")
+            result = self._validate_pair(file_info)
+            self.results.append(result)
+            self.all_mismatches.extend(result.get("mismatches", []))
+
+        report  = self._build_report()
+        self._write_json_report(report)
+        self._write_md_report(report)
+        state = {"report": report, "output_dir": str(self.output_dir)}
+        save_state(str(self.output_dir), "validation_state.json", state)
+        self.emit("validation", f"Done. Score: {report['equivalence_score']}/100 — {report['status']}")
+        return state
+
+    def _validate_pair(self, file_info: dict) -> dict:
+        java_code = Path(file_info["abs_path"]).read_text(errors="replace")
+        py_path   = Path(file_info["python_file"])
+
+        if not py_path.exists():
+            return {"file": file_info["class_name"], "mismatches": [],
+                    "status": "skipped", "reason": "Python file not found"}
+
+        py_code = py_path.read_text(errors="replace")
+        schema  = _MISMATCH_SCHEMA_HINT
+
+        system  = self.pb.build("validation", {"schema": schema})
+        user    = f"### Java:\n{java_code}\n\n### Python:\n{py_code}"
+
+        try:
+            result = self.llm.complete_json(system, user)
+            result["file"] = file_info["class_name"]
+            return result
+        except Exception as e:
+            logger.error(f"Validation LLM call failed for {file_info['class_name']}: {e}")
+            return {"file": file_info["class_name"], "mismatches": [],
+                    "status": "error", "error": str(e)}
+
+    def _build_report(self) -> dict:
+        total_files  = len(self.results)
+        mismatches   = self.all_mismatches
+        critical     = [m for m in mismatches if m.get("severity") == "Critical"]
+        medium       = [m for m in mismatches if m.get("severity") == "Medium"]
+        low          = [m for m in mismatches if m.get("severity") == "Low"]
+
+        # Score: start at 100, deduct by severity
+        score = 100
+        score -= len(critical) * 10
+        score -= len(medium) * 4
+        score -= len(low) * 1
+        score = max(0, min(100, score))
+
+        if score >= 90:   status = "Pass"
+        elif score >= 70: status = "Needs Review"
+        else:             status = "Fail"
+
+        return {
+            "repo":              self.manifest["repo_url"],
+            "summary":           self._generate_summary(score, status, mismatches),
+            "equivalence_score": score,
+            "status":            status,
+            "files_checked":     total_files,
+            "mismatches":        mismatches,
+            "passed_checks":     total_files - len([r for r in self.results if r.get("mismatches")]),
+            "failed_checks":     len([r for r in self.results if r.get("mismatches")]),
+            "by_severity":       {"Critical": len(critical), "Medium": len(medium), "Low": len(low)},
+        }
+
+    def _generate_summary(self, score, status, mismatches) -> str:
+        system = "You are a technical writer. Write a 2-sentence summary of a code migration validation result. Be factual and concise."
+        user   = f"Score: {score}/100. Status: {status}. Total mismatches: {len(mismatches)}. Critical: {len([m for m in mismatches if m.get('severity')=='Critical'])}."
+        try:
+            return self.llm.complete(system, user)
+        except Exception:
+            return f"Validation completed with score {score}/100 ({status}). {len(mismatches)} mismatches found."
+
+    def _write_json_report(self, report: dict):
+        path = self.output_dir / "reports" / "validation_report.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(report, indent=2))
+
+    def _write_md_report(self, report: dict):
+        lines = [
+            f"# Validation Report\n",
+            f"**Repo:** {report['repo']}  ",
+            f"**Score:** {report['equivalence_score']}/100  ",
+            f"**Status:** {report['status']}  ",
+            f"**Files checked:** {report['files_checked']}\n",
+            f"## Summary\n{report['summary']}\n",
+            f"## Mismatches ({len(report['mismatches'])} total)\n",
+        ]
+        for m in report["mismatches"]:
+            lines += [
+                f"### [{m.get('severity','?')}] {m.get('location','')}",
+                f"- **Type:** {m.get('type','')}",
+                f"- **Description:** {m.get('description','')}",
+                f"- **Java behavior:** {m.get('java_behavior','')}",
+                f"- **Python behavior:** {m.get('python_behavior','')}",
+                f"- **Recommendation:** {m.get('recommendation','')}\n",
+            ]
+        path = self.output_dir / "docs" / "validation_report.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("\n".join(lines))
+
+
+_MISMATCH_SCHEMA_HINT = """{
+  "mismatches": [
+    {
+      "type": "Logic | Data | Exception | Missing | Performance",
+      "severity": "Critical | Medium | Low",
+      "location": "ClassName.java -> class_name.py : method_name()",
+      "description": "What is different",
+      "java_behavior": "What Java does",
+      "python_behavior": "What Python does",
+      "recommendation": "How to fix"
+    }
+  ]
+}
+Return ONLY valid JSON matching this schema. No prose, no markdown fences."""
+```
+
+---
+
+## Validation Prompt Template (`prompts/validation.txt`)
+
+```
+You are a code equivalence verification expert.
+Compare the Java and Python code provided by the user.
+Identify all logic differences, missing functionality, or behavioral mismatches.
+
+Check specifically:
+- All methods are present with equivalent logic
+- Data transformations produce the same output for the same input
+- Exception/error handling covers the same cases
+- Null/None behavior is handled consistently
+- Edge cases (empty input, boundary values) behave identically
+- Return types and structures are equivalent
+
+Severity guide:
+- Critical: different output for same input, missing method, wrong exception
+- Medium: edge case difference, minor logic divergence
+- Low: style/naming inconsistency with no behavioral impact
+
+Expected output schema:
+{schema}
+
+Return ONLY the JSON. No prose. No markdown fences. No preamble.
+```
+
+---
+
+## Equivalence Score Breakdown
+| Deduction | Amount |
+|-----------|--------|
+| Per Critical mismatch | -10 points |
+| Per Medium mismatch | -4 points |
+| Per Low mismatch | -1 point |
+| Floor | 0 |
+| Ceiling | 100 |
+
+| Score | Status |
+|-------|--------|
+| 90–100 | Pass |
+| 70–89 | Needs Review |
+| 0–69 | Fail |
+
+---
+
+## Validation State Schema
+```json
+{
+  "output_dir": "output",
+  "report": {
+    "equivalence_score": 87,
+    "status": "Needs Review",
+    "files_checked": 42,
+    "mismatches": [ ... ],
+    "by_severity": { "Critical": 1, "Medium": 3, "Low": 8 }
+  }
+}
+```
+
+
+===== SKILL: web-ui =====
+
+---
+name: web-ui
+description: >
+  Use this skill when implementing the FastAPI web UI for the Java→Python
+  migration pipeline. This provides a browser-based interface where users paste
+  a GitHub URL, select agents and LLM provider, watch live progress logs via
+  Server-Sent Events, and download the output zip. Triggers on any mention of
+  "web UI", "FastAPI server", "web interface", "browser UI", "live logs",
+  "SSE progress", or "web/app.py". Read this skill before writing web/app.py
+  or web/templates/index.html.
+---
+
+# Web UI Skill
+
+**Files:** `web/app.py`, `web/templates/index.html`, `web/templates/report.html`, `web/static/style.css`
+
+The web UI is a thin FastAPI server that wraps the same `Orchestrator` used by the CLI. It adds a browser form, live SSE progress streaming, and a zip download endpoint.
+
+---
+
+## Directory Structure
+
+```
+web/
+├── app.py                  # FastAPI server
+├── templates/
+│   ├── index.html          # Main UI
+│   └── report.html         # Inline report viewer
+└── static/
+    └── style.css
+```
+
+---
+
+## `web/app.py`
+
+```python
+import asyncio, json, os, uuid, zipfile
+from pathlib import Path
+from typing import AsyncGenerator
+
+from fastapi import FastAPI, BackgroundTasks, Request
+from fastapi.responses import HTMLResponse, StreamingResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel
+from sse_starlette.sse import EventSourceResponse
+
+from orchestrator import Orchestrator
+
+app = FastAPI(title="Java → Python Migration Suite")
+app.mount("/static", StaticFiles(directory="web/static"), name="static")
+templates = Jinja2Templates(directory="web/templates")
+
+# ── In-memory job store (replace with Redis for production) ──────────────────
+jobs: dict[str, dict] = {}   # job_id → { status, logs, output_dir }
+
+# ── Request / Response models ────────────────────────────────────────────────
+
+class MigrateRequest(BaseModel):
+    repo_url:   str
+    agents:     list[str] = ["migration", "validation", "tests", "docs"]
+    provider:   str = "groq"
+    model:      str | None = None
+    api_key:    str | None = None
+    branch:     str | None = None
+
+# ── Endpoints ────────────────────────────────────────────────────────────────
+
+@app.get("/", response_class=HTMLResponse)
+async def index(request: Request):
+    return templates.TemplateResponse("index.html", {"request": request})
+
+@app.post("/migrate")
+async def start_migration(req: MigrateRequest, background: BackgroundTasks):
+    job_id     = str(uuid.uuid4())[:8]
+    output_dir = f"output/{job_id}"
+    jobs[job_id] = {"status": "running", "logs": [], "output_dir": output_dir}
+
+    # Set provider credentials from request
+    if req.api_key:
+        KEY_MAP = {"groq": "GROQ_API_KEY", "huggingface": "HF_API_KEY", "openai": "OPENAI_API_KEY"}
+        if req.provider in KEY_MAP:
+            os.environ[KEY_MAP[req.provider]] = req.api_key
+    os.environ["LLM_PROVIDER"] = req.provider
+
+    background.add_task(_run_pipeline, job_id, req, output_dir)
+    return {"job_id": job_id, "status": "started", "output_dir": output_dir}
+
+@app.get("/progress/{job_id}")
+async def progress(job_id: str):
+    """SSE endpoint — streams log lines to the browser in real time."""
+    async def event_generator() -> AsyncGenerator:
+        last_sent = 0
+        while True:
+            job = jobs.get(job_id, {})
+            logs = job.get("logs", [])
+            for msg in logs[last_sent:]:
+                yield {"data": json.dumps(msg)}
+                last_sent += 1
+            if job.get("status") in ("done", "error"):
+                yield {"data": json.dumps({"type": "done", "status": job["status"]})}
+                break
+            await asyncio.sleep(0.5)
+    return EventSourceResponse(event_generator())
+
+@app.get("/status/{job_id}")
+async def status(job_id: str):
+    job = jobs.get(job_id)
+    if not job:
+        return {"error": "Job not found"}
+    return {"job_id": job_id, "status": job["status"]}
+
+@app.get("/report/{job_id}", response_class=HTMLResponse)
+async def view_report(request: Request, job_id: str):
+    job  = jobs.get(job_id, {})
+    path = Path(job.get("output_dir","")) / "docs" / "full_report.html"
+    if path.exists():
+        return HTMLResponse(path.read_text())
+    return HTMLResponse("<h1>Report not ready yet</h1>")
+
+@app.get("/download/{job_id}")
+async def download(job_id: str):
+    job        = jobs.get(job_id, {})
+    output_dir = Path(job.get("output_dir",""))
+    if not output_dir.exists():
+        return {"error": "Output not found"}
+
+    zip_path = output_dir.parent / f"{job_id}_output.zip"
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for f in output_dir.rglob("*"):
+            if f.is_file():
+                zf.write(f, f.relative_to(output_dir.parent))
+
+    return FileResponse(str(zip_path), filename=f"migration_{job_id}.zip",
+                        media_type="application/zip")
+
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
+
+# ── Background task ───────────────────────────────────────────────────────────
+
+def _run_pipeline(job_id: str, req: MigrateRequest, output_dir: str):
+    def emit(stage: str, message: str):
+        jobs[job_id]["logs"].append({"stage": stage, "message": message})
+
+    try:
+        orc = Orchestrator(
+            repo_url   = req.repo_url,
+            output_dir = output_dir,
+            agents     = req.agents,
+            llm_config = {"provider": req.provider, "model": req.model,
+                          "temperature": 0.2, "max_tokens": 4096, "retry_attempts": 3},
+            branch     = req.branch,
+        )
+        orc.register_progress_callback(emit)
+        orc.run()
+        jobs[job_id]["status"] = "done"
+    except Exception as e:
+        emit("error", str(e))
+        jobs[job_id]["status"] = "error"
+```
+
+---
+
+## `web/templates/index.html`
+
+```html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Java → Python Migration Suite</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="container">
+    <h1>☕ → 🐍  Java → Python Migration Suite</h1>
+    <p class="subtitle">Paste a GitHub repo URL. The AI does the rest.</p>
+
+    <div class="card">
+      <label>GitHub Repository URL</label>
+      <input type="url" id="repo_url"
+             placeholder="https://github.com/apache/commons-lang"
+             style="width:100%">
+
+      <div class="row">
+        <div>
+          <label>LLM Provider</label>
+          <select id="provider" onchange="updateModelPlaceholder()">
+            <option value="groq">Groq (free, fast)</option>
+            <option value="huggingface">HuggingFace (free)</option>
+            <option value="ollama">Ollama (local)</option>
+          </select>
+        </div>
+        <div>
+          <label>Model <small>(optional override)</small></label>
+          <input type="text" id="model" placeholder="llama3-70b-8192">
+        </div>
+      </div>
+
+      <div id="api_key_row">
+        <label>API Key</label>
+        <input type="password" id="api_key" placeholder="gsk_xxxx or hf_xxxx">
+      </div>
+
+      <label>Run Agents</label>
+      <div class="checkboxes">
+        <label><input type="checkbox" value="migration"  checked> Migration</label>
+        <label><input type="checkbox" value="validation" checked> Validation</label>
+        <label><input type="checkbox" value="tests"      checked> Test Generation</label>
+        <label><input type="checkbox" value="docs"       checked> Documentation</label>
+      </div>
+
+      <button id="start_btn" onclick="startMigration()">▶ Start Migration</button>
+    </div>
+
+    <!-- Progress panel (hidden until job starts) -->
+    <div class="card" id="progress_panel" style="display:none">
+      <div style="display:flex; justify-content:space-between; align-items:center">
+        <h2>Progress</h2>
+        <div id="status_badge" class="badge running">Running...</div>
+      </div>
+      <div id="log_area"></div>
+      <div id="action_buttons" style="display:none; margin-top:16px;">
+        <button onclick="viewReport()">📄 View Report</button>
+        <button onclick="downloadOutput()">⬇ Download Output</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let currentJobId = null;
+
+    const MODEL_DEFAULTS = {
+      groq:         'llama3-70b-8192',
+      huggingface:  'Qwen/Qwen2.5-Coder-32B-Instruct',
+      ollama:       'deepseek-coder-v2:16b',
+    };
+
+    function updateModelPlaceholder() {
+      const p = document.getElementById('provider').value;
+      document.getElementById('model').placeholder = MODEL_DEFAULTS[p] || '';
+      document.getElementById('api_key_row').style.display =
+        p === 'ollama' ? 'none' : 'block';
+    }
+
+    async function startMigration() {
+      const repo = document.getElementById('repo_url').value.trim();
+      if (!repo) { alert('Please enter a GitHub URL'); return; }
+
+      const agents = [...document.querySelectorAll('.checkboxes input:checked')]
+                       .map(cb => cb.value);
+      if (!agents.length) { alert('Select at least one agent'); return; }
+
+      document.getElementById('start_btn').disabled = true;
+      document.getElementById('progress_panel').style.display = 'block';
+      document.getElementById('log_area').innerHTML = '';
+
+      const body = {
+        repo_url: repo,
+        agents,
+        provider: document.getElementById('provider').value,
+        model:    document.getElementById('model').value || null,
+        api_key:  document.getElementById('api_key').value || null,
+      };
+
+      const res = await fetch('/migrate', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(body)
+      });
+      const data = await res.json();
+      currentJobId = data.job_id;
+      listenProgress(currentJobId);
+    }
+
+    function listenProgress(jobId) {
+      const src = new EventSource(`/progress/${jobId}`);
+      const log = document.getElementById('log_area');
+
+      src.onmessage = (e) => {
+        const msg = JSON.parse(e.data);
+        if (msg.type === 'done') {
+          src.close();
+          const badge = document.getElementById('status_badge');
+          badge.textContent = msg.status === 'done' ? '✅ Complete' : '❌ Error';
+          badge.className = 'badge ' + (msg.status === 'done' ? 'done' : 'error');
+          document.getElementById('action_buttons').style.display =
+            msg.status === 'done' ? 'block' : 'none';
+          document.getElementById('start_btn').disabled = false;
+          return;
+        }
+        const line = document.createElement('div');
+        line.className = `log-line ${msg.stage}`;
+        line.textContent = `[${msg.stage}] ${msg.message}`;
+        log.appendChild(line);
+        log.scrollTop = log.scrollHeight;
+      };
+    }
+
+    function viewReport() {
+      if (currentJobId) window.open(`/report/${currentJobId}`, '_blank');
+    }
+
+    function downloadOutput() {
+      if (currentJobId) window.location.href = `/download/${currentJobId}`;
+    }
+
+    updateModelPlaceholder();
+  </script>
+</body>
+</html>
+```
+
+---
+
+## `web/static/style.css`
+
+```css
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: Arial, sans-serif; background: #f0f4f8; color: #222; }
+.container { max-width: 860px; margin: 40px auto; padding: 0 20px; }
+h1 { font-size: 28px; color: #1a3c6e; margin-bottom: 6px; }
+.subtitle { color: #555; margin-bottom: 24px; }
+.card { background: white; border-radius: 10px; padding: 24px;
+        margin-bottom: 24px; box-shadow: 0 2px 8px rgba(0,0,0,.08); }
+label { display: block; font-weight: bold; margin: 14px 0 4px; font-size: 14px; }
+input, select { width: 100%; padding: 9px 12px; border: 1px solid #ccc;
+                border-radius: 6px; font-size: 14px; }
+.row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 14px; }
+.checkboxes { display: flex; gap: 20px; flex-wrap: wrap; margin-top: 4px; }
+.checkboxes label { font-weight: normal; display: flex; align-items: center; gap: 6px; }
+button { background: #1a3c6e; color: white; border: none; padding: 11px 24px;
+         border-radius: 6px; font-size: 15px; cursor: pointer; margin-top: 20px; }
+button:hover { background: #0d2a52; }
+button:disabled { background: #aaa; cursor: not-allowed; }
+h2 { color: #1a3c6e; margin-bottom: 12px; }
+.badge { padding: 4px 14px; border-radius: 20px; font-size: 13px; font-weight: bold; }
+.badge.running { background: #fff3cd; color: #856404; }
+.badge.done    { background: #d4edda; color: #155724; }
+.badge.error   { background: #f8d7da; color: #721c24; }
+#log_area { background: #1e1e1e; color: #d4d4d4; border-radius: 6px;
+            padding: 14px; height: 320px; overflow-y: auto; font-family: monospace; font-size: 13px; }
+.log-line { padding: 2px 0; }
+.log-line.migration  { color: #9cdcfe; }
+.log-line.validation { color: #ce9178; }
+.log-line.tests      { color: #b5cea8; }
+.log-line.docs       { color: #c586c0; }
+.log-line.error      { color: #f44747; }
+```
+
+---
+
+## Start Command
+
+```bash
+# Install dependencies
+pip install -r requirements.txt
+
+# Start the web server
+python -m uvicorn web.app:app --host 0.0.0.0 --port 8000 --reload
+
+# Then open: http://localhost:8000
+```
+
+## Additional dependency for web UI
+```
+sse-starlette>=2.1.0    # SSE support for FastAPI
+```

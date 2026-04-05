@@ -1,0 +1,19 @@
+llm:
+  provider: groq              # groq | huggingface | ollama | openai
+  model: llama-3.1-8b-instant     # provider default used if omitted
+  temperature: 0.2
+  max_tokens: 4096
+  retry_attempts: 3
+
+chunker:
+  max_tokens_per_chunk: 3000
+  split_strategy: method_boundary
+
+agents:
+  migration: true
+  validation: true
+  test_generation: true
+  documentation: true
+
+output:
+  base_dir: ./output

@@ -1,0 +1,628 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="AI-powered Java to Python code migration suite — migrate, validate, test, and document entire Java repositories automatically.">
+  <title>Java → Python AI Migration Suite</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <style>
+    .key-input-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      background: rgba(255,255,255,0.05);
+      padding: 5px 10px;
+      border-radius: 6px;
+    }
+    .provider-label {
+      width: 60px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: var(--text-dim);
+    }
+    .key-input-row input {
+      margin-bottom: 0 !important;
+      flex: 1;
+    }
+    @keyframes shake {
+      0%,100% { transform: translateX(0); }
+      20%,60%  { transform: translateX(-6px); }
+      40%,80%  { transform: translateX(6px); }
+    }
+    .model-input-row {
+      display: flex;
+      gap: 8px;
+    }
+    .model-input-row input {
+      flex: 1;
+    }
+    .btn-fetch {
+      padding: 0 12px;
+      height: 38px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      font-size: 12px;
+      cursor: pointer;
+      display: none;
+    }
+    .btn-fetch:hover {
+      background: rgba(255,255,255,0.1);
+    }
+    .model-list {
+      margin-top: 8px;
+      display: none;
+      flex-direction: column;
+      gap: 4px;
+      max-height: 150px;
+      overflow-y: auto;
+      padding: 8px;
+      background: rgba(0,0,0,0.2);
+      border-radius: 6px;
+      border: 1px solid var(--border);
+    }
+    .model-item {
+      padding: 6px 10px;
+      font-size: 12px;
+      color: var(--text-dim);
+      cursor: pointer;
+      border-radius: 4px;
+    }
+    .model-item:hover {
+      background: rgba(255,255,255,0.05);
+      color: var(--text);
+    }
+  </style>
+</head>
+<body>
+
+<div class="container">
+
+  <!-- ── Hero ── -->
+  <div class="hero">
+    <span class="hero-emoji">☕ → 🐍</span>
+    <h1>Java → Python Migration Suite</h1>
+    <p class="subtitle">Paste a GitHub repo URL. Four AI agents migrate, validate, test, and document the entire codebase.</p>
+  </div>
+
+  <!-- ── Input Card ── -->
+  <div class="card" style="animation-delay:0.05s">
+    <p class="card-title">📦 Repository</p>
+
+    <div class="field-group">
+      <label for="repo_url">GitHub Repository URL</label>
+      <input type="url" id="repo_url"
+             placeholder="https://github.com/apache/commons-lang"
+             autocomplete="off" spellcheck="false">
+    </div>
+
+    <div class="row">
+      <div class="field-group" style="margin-bottom:0">
+        <label for="provider">LLM Provider</label>
+        <div class="model-input-row">
+          <select id="provider" onchange="updateProviderUI()">
+            <option value="groq">⚡ Groq — free &amp; fast</option>
+            <option value="huggingface">🤗 HuggingFace — free</option>
+            <option value="ollama">💻 Ollama — local</option>
+            <option value="lmstudio">🧱 LM Studio — local</option>
+            <option value="openai">🧠 OpenAI</option>
+            <option value="gemini">✨ Gemini — Google</option>
+          </select>
+          <button id="btn_connect_local" class="btn-fetch" onclick="fetchModels()">Start</button>
+          <button id="btn_test_model" class="btn-fetch" style="background:rgba(104,211,145,0.1); border-color:rgba(104,211,145,0.3); color:#68d391;" onclick="testModel()">Test</button>
+          <button id="btn_debug_local" class="btn-fetch" style="background:rgba(252,129,129,0.1); border-color:rgba(252,129,129,0.3); color:#fc8181;" onclick="debugDiscovery()">Debug</button>
+        </div>
+        <p class="provider-hint" id="provider_hint">Recommend for speed. Get a free key at console.groq.com</p>
+      </div>
+      <div class="field-group" style="margin-bottom:0">
+        <label for="model">Model <small>(optional override)</small></label>
+        <input type="text" id="model" placeholder="llama3-70b-8192">
+        <div id="model_list" class="model-list"></div>
+      </div>
+    </div>
+
+    <div class="field-group" id="api_keys_section">
+      <label>Multi-Provider Failover Pool</label>
+      <div style="display: flex; flex-direction: column; gap: 10px;">
+        <div class="key-input-row">
+          <span class="provider-label">Groq</span>
+          <input type="password" id="groq_key" placeholder="gsk_xxxx" autocomplete="off">
+        </div>
+        <div class="key-input-row">
+          <span class="provider-label">HF</span>
+          <input type="password" id="hf_key" placeholder="hf_xxxx" autocomplete="off">
+        </div>
+        <div class="key-input-row">
+          <span class="provider-label">OpenAI</span>
+          <input type="password" id="openai_key" placeholder="sk-xxxx" autocomplete="off">
+        </div>
+        <div class="key-input-row">
+          <span class="provider-label">LMS</span>
+          <input type="password" id="lmstudio_key" placeholder="Optional token" autocomplete="off">
+        </div>
+        <div class="key-input-row">
+          <span class="provider-label">Gemini</span>
+          <input type="password" id="gemini_key" placeholder="AI Studio key" autocomplete="off">
+        </div>
+      </div>
+      <p class="provider-hint">Add multiple keys to automatically failover if one hits rate limits.</p>
+    </div>
+  </div>
+
+  <!-- ── Agents Card ── -->
+  <div class="card" style="animation-delay:0.12s">
+    <p class="card-title">🤖 Agents to Run</p>
+    <div class="agents-grid">
+      <label class="agent-chip">
+        <input type="checkbox" value="migration" checked id="cb_migration">
+        <span class="agent-icon">🔄</span>
+        <span>
+          <div class="agent-name">Migration</div>
+          <div class="agent-desc">Java → idiomatic Python</div>
+        </span>
+      </label>
+      <label class="agent-chip">
+        <input type="checkbox" value="validation" checked id="cb_validation">
+        <span class="agent-icon">✅</span>
+        <span>
+          <div class="agent-name">Validation</div>
+          <div class="agent-desc">Logic &amp; behavior check</div>
+        </span>
+      </label>
+      <label class="agent-chip">
+        <input type="checkbox" value="tests" checked id="cb_tests">
+        <span class="agent-icon">🧪</span>
+        <span>
+          <div class="agent-name">Test Generation</div>
+          <div class="agent-desc">JUnit 5 + pytest suites</div>
+        </span>
+      </label>
+      <label class="agent-chip">
+        <input type="checkbox" value="docs" checked id="cb_docs">
+        <span class="agent-icon">📝</span>
+        <span>
+          <div class="agent-name">Documentation</div>
+          <div class="agent-desc">HTML report &amp; dev guide</div>
+        </span>
+      </label>
+    </div>
+
+    <button id="start_btn" onclick="startMigration()">▶ Start Migration Pipeline</button>
+  </div>
+
+  <!-- ── Progress Card (hidden until job starts) ── -->
+  <div class="card" id="progress_panel" style="display:none; animation-delay:0s">
+    <div class="progress-header">
+      <h2>Pipeline Progress</h2>
+      <div id="status_badge" class="badge running">Running…</div>
+    </div>
+
+    <!-- Step indicators -->
+    <div class="steps" id="steps_bar">
+      <div class="step" id="step_ingest">📥 Ingest</div>
+      <div class="step" id="step_migration">🔄 Migrate</div>
+      <div class="step" id="step_validation">✅ Validate</div>
+      <div class="step" id="step_tests">🧪 Tests</div>
+      <div class="step" id="step_docs">📝 Docs</div>
+    </div>
+
+    <!-- Terminal log -->
+    <div id="log_area"></div>
+
+    <!-- Stats (shown on completion) -->
+    <div id="stats_bar" class="stats" style="display:none"></div>
+
+    <!-- Action buttons (shown on done) -->
+    <div class="btn-group" id="action_buttons" style="display:none">
+      <button class="btn" onclick="viewReport()">📄 View Full Report</button>
+      <button class="btn" onclick="downloadOutput()">⬇ Download Output ZIP</button>
+      <button class="btn" onclick="resetUI()">🔁 New Migration</button>
+    </div>
+  </div>
+
+</div><!-- /container -->
+
+<script>
+  // ── State ──────────────────────────────────────────────────────────────────
+  let currentJobId = null;
+
+  const PROVIDER_INFO = {
+    groq:        { placeholder: 'llama3-70b-8192',                    hint: 'Free key at console.groq.com — fastest option.' },
+    huggingface: { placeholder: 'Qwen/Qwen2.5-Coder-32B-Instruct',   hint: 'Free key at huggingface.co/settings/tokens.' },
+    ollama:      { placeholder: 'deepseek-coder-v2:16b',              hint: 'Runs locally — no API key needed.' },
+    lmstudio:    { placeholder: 'google/gemma-4-26b-a4b',             hint: 'Runs locally — standard port 1234.' },
+    openai:      { placeholder: 'gpt-4o',                             hint: 'Paid API. Set key in the field above.' },
+    gemini:      { placeholder: 'gemini-1.5-pro',                     hint: 'Get a free key at aistudio.google.com' },
+  };
+
+  const STEP_MAP = {
+    ingest:     'step_ingest',
+    migration:  'step_migration',
+    validation: 'step_validation',
+    tests:      'step_tests',
+    docs:       'step_docs',
+    error:      null,
+  };
+
+  // ── Provider UI ────────────────────────────────────────────────────────────
+  function updateProviderUI() {
+    const p = document.getElementById('provider').value;
+    const info = PROVIDER_INFO[p] || {};
+    document.getElementById('model').placeholder = info.placeholder || '';
+    document.getElementById('provider_hint').textContent = info.hint || '';
+    
+    // Show Start button for local providers
+    const btnConnect = document.getElementById('btn_connect_local');
+    const btnDebug = document.getElementById('btn_debug_local');
+    const btnTest = document.getElementById('btn_test_model');
+    const isLocal = (p === 'lmstudio' || p === 'ollama');
+    btnConnect.style.display = isLocal ? 'block' : 'none';
+    btnDebug.style.display   = (p === 'lmstudio') ? 'block' : 'none';
+    btnTest.style.display    = 'block'; // Always show test button
+    document.getElementById('model_list').style.display = 'none';
+  }
+
+  async function testModel() {
+    const p = document.getElementById('provider').value;
+    const m = document.getElementById('model').value.trim();
+    const btn = document.getElementById('btn_test_model');
+    
+    if (!m) { alert('Please select or enter a model name first.'); return; }
+    
+    btn.disabled = true;
+    btn.textContent = '...';
+
+    // ── 1. For LM Studio, ensure it is LOADED first ──
+    if (p === 'lmstudio') {
+      try {
+        const loadRes = await fetch('/api/load-model', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ provider: p, model: m }),
+        });
+        const loadData = await loadRes.json();
+        if (loadData.status === 'error') {
+           console.warn('Load warning:', loadData.message);
+           // We continue anyway, as it might already be loaded
+        }
+      } catch (e) {
+        console.error('Load communication failed');
+      }
+    }
+
+    // ── 2. Now perform the Chat Test ──
+    const body = {
+      provider: p,
+      model:    m,
+      api_key:  document.getElementById(p + '_key')?.value?.trim() || null,
+      lmstudio_key: document.getElementById('lmstudio_key')?.value?.trim() || null,
+      gemini_key: document.getElementById('gemini_key')?.value?.trim() || null
+    };
+
+    try {
+      const res = await fetch('/api/check-llm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        alert('SUCCESS!\n\nModel: ' + data.model + '\nLatency: ' + data.latency_ms + 'ms\nReply: ' + data.reply);
+      } else {
+        alert('FAILED!\n\nError: ' + data.error);
+      }
+    } catch (e) {
+      alert('Network error: ' + e.message);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Test';
+    }
+  }
+
+  async function debugDiscovery() {
+    const p = document.getElementById('provider').value;
+    const log = document.getElementById('log_area');
+    const panel = document.getElementById('progress_panel');
+    
+    panel.style.display = 'block';
+    addLog('ingest', 'DEBUG', `Starting discovery debug for ${p}...`);
+    
+    try {
+      addLog('ingest', 'DEBUG', 'Testing API v0 (http://127.0.0.1:1234/api/v0/models)...');
+      const res = await fetch(`/api/models/${p}`);
+      const data = await res.json();
+      addLog('ingest', 'DEBUG', `Result: ${JSON.stringify(data)}`);
+    } catch (e) {
+      addLog('error', 'DEBUG', `Network error: ${e.message}`);
+    }
+  }
+
+  async function fetchModels() {
+    const p = document.getElementById('provider').value;
+    const btn = document.getElementById('btn_connect_local');
+    const list = document.getElementById('model_list');
+    
+    btn.disabled = true;
+    btn.textContent = '...';
+    list.style.display = 'none';
+    list.innerHTML = '';
+
+    try {
+      // 1. START SERVER
+      console.log('Step 1: Starting server...');
+      await fetch(`/api/start-server/${p}`);
+      
+      // 2. WAIT
+      console.log('Step 2: Waiting for initialization...');
+      await new Promise(r => setTimeout(r, 8000));
+
+      // 3. LIST MODELS
+      console.log('Step 3: Fetching model list...');
+      const res = await fetch(`/api/models/${p}`);
+      const data = await res.json();
+      
+      if (data.models && data.models.length > 0) {
+        list.style.display = 'flex';
+        const header = document.createElement('div');
+        header.style.fontSize = '11px';
+        header.style.color = 'var(--accent)';
+        header.style.padding = '8px 10px';
+        header.style.fontWeight = '700';
+        header.style.borderBottom = '1px solid var(--border)';
+        header.style.marginBottom = '4px';
+        header.textContent = 'SELECT INSTALLED MODEL:';
+        list.appendChild(header);
+
+        data.models.forEach(m => {
+          const item = document.createElement('div');
+          item.className = 'model-item';
+          item.textContent = m;
+          item.onclick = async () => {
+            document.getElementById('model').value = m;
+            list.style.display = 'none';
+            // 4. AUTO-LOAD ON SELECTION
+            alert('Model selected. System will now ensure it is LOADED into RAM...');
+            btn.textContent = 'Loading...';
+            btn.disabled = true;
+            try {
+               const loadRes = await fetch('/api/load-model', {
+                 method: 'POST',
+                 headers: { 'Content-Type': 'application/json' },
+                 body: JSON.stringify({ provider: p, model: m }),
+               });
+               const loadData = await loadRes.json();
+               if (loadData.status === 'error') {
+                  alert('Model Load Failed: ' + loadData.message);
+               } else {
+                  alert('Model Load Status: ' + (loadData.status || 'Ready'));
+               }
+            } catch (e) {
+               alert('Load request sent. Check LM Studio for progress.');
+            } finally {
+               btn.textContent = 'Start';
+               btn.disabled = false;
+            }
+          };
+          list.appendChild(item);
+        });
+      } else {
+        const errorMsg = data.error || 'Check if models are fully downloaded.';
+        const manual = confirm('No models discovered in ' + p + '.\n\nDetails: ' + errorMsg + '\n\nWould you like to enter the model name manually?\n\n(You can find the exact model ID in LM Studio → Local Server tab → the loaded model name shown there)');
+        if (manual) {
+           const name = prompt('Enter the full model ID (e.g. google/gemma-4-26b-a4b):');
+           if (name) {
+              document.getElementById('model').value = name;
+              // Explicit load for manual entry too
+              if (confirm('Load this model into RAM now?')) {
+                 await fetch('/api/load-model', {
+                   method: 'POST',
+                   headers: { 'Content-Type': 'application/json' },
+                   body: JSON.stringify({ provider: p, model: name }),
+                 });
+              }
+           }
+        }
+      }
+    } catch (e) {
+      alert('Network error: ' + e.message);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Start';
+    }
+  }
+
+  // ── LLM Test ───────────────────────────────────────────────────────────────
+  async function testLLM() {
+    // Legacy test function - could be updated to test multiple, but we skip for now
+  }
+
+  function showLLMStatus(type, html) {
+    const el = document.getElementById('llm_status');
+    if(!el) return;
+    el.style.display = 'block';
+    el.className = `llm-status llm-${type}`;
+    el.innerHTML = html;
+  }
+
+  function hideLLMStatus() {
+    const el = document.getElementById('llm_status');
+    if(!el) return;
+    el.style.display = 'none';
+    el.innerHTML = '';
+  }
+
+  // ── Start Pipeline ─────────────────────────────────────────────────────────
+  async function startMigration() {
+    const repo = document.getElementById('repo_url').value.trim();
+    if (!repo) { shakeInput('repo_url'); return; }
+
+    const agents = [...document.querySelectorAll('.agents-grid input:checked')].map(cb => cb.value);
+    if (!agents.length) { alert('Please select at least one agent.'); return; }
+
+    // Reset UI
+    document.getElementById('start_btn').disabled = true;
+    const panel = document.getElementById('progress_panel');
+    panel.style.display = 'block';
+    panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    document.getElementById('log_area').innerHTML = '';
+    document.getElementById('status_badge').className = 'badge running';
+    document.getElementById('status_badge').textContent = 'Running…';
+    resetSteps();
+
+    const provider = document.getElementById('provider').value;
+    const model    = document.getElementById('model').value.trim();
+
+    // ── Pre-load model for local providers ──
+    if (provider === 'lmstudio' && model) {
+      addLog('ingest', 'Load', `Ensuring model ${model} is loaded...`);
+      try {
+        const loadRes = await fetch('/api/load-model', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ provider, model }),
+        });
+        const loadData = await loadRes.json();
+        if (loadData.status === 'error') {
+           addLog('error', 'Load', `Load warning: ${loadData.message}`);
+        } else {
+           addLog('ingest', 'Load', 'Model ready.');
+        }
+      } catch (e) {
+        addLog('error', 'Load', 'Failed to communicate with load endpoint.');
+      }
+    }
+
+    const body = {
+      repo_url: repo,
+      agents,
+      provider:   provider,
+      model:      model || null,
+      groq_key:   document.getElementById('groq_key').value.trim() || null,
+      hf_key:     document.getElementById('hf_key').value.trim() || null,
+      openai_key: document.getElementById('openai_key').value.trim() || null,
+      lmstudio_key: document.getElementById('lmstudio_key').value.trim() || null,
+      gemini_key: document.getElementById('gemini_key').value.trim() || null,
+    };
+
+    try {
+      const res  = await fetch('/migrate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      currentJobId = data.job_id;
+      listenProgress(currentJobId);
+    } catch (e) {
+      addLog('error', 'network', 'Failed to start pipeline: ' + e.message);
+      document.getElementById('status_badge').className = 'badge error';
+      document.getElementById('status_badge').textContent = '❌ Error';
+      document.getElementById('start_btn').disabled = false;
+    }
+  }
+
+  // ── SSE Progress Listener ─────────────────────────────────────────────────
+  function listenProgress(jobId) {
+    const src = new EventSource(`/progress/${jobId}`);
+
+    src.onmessage = (e) => {
+      const msg = JSON.parse(e.data);
+
+      if (msg.type === 'done') {
+        src.close();
+        const ok = msg.status === 'done';
+        const badge = document.getElementById('status_badge');
+        badge.textContent = ok ? '✅ Complete' : '❌ Failed';
+        badge.className   = 'badge ' + (ok ? 'done' : 'error');
+        if (ok) {
+          markStepDone(null);  // mark all done
+          document.getElementById('action_buttons').style.display = 'flex';
+        }
+        document.getElementById('start_btn').disabled = false;
+        return;
+      }
+
+      addLog(msg.stage, msg.stage, msg.message);
+      activateStep(msg.stage);
+    };
+
+    src.onerror = () => {
+      src.close();
+      document.getElementById('start_btn').disabled = false;
+    };
+  }
+
+  // ── Log helpers ───────────────────────────────────────────────────────────
+  function addLog(cssClass, stage, message) {
+    const log  = document.getElementById('log_area');
+    const line = document.createElement('div');
+    line.className = `log-line ${cssClass}`;
+    line.innerHTML = `<span class="log-stage">[${stage}]</span><span class="log-msg">${escapeHtml(message)}</span>`;
+    log.appendChild(line);
+    log.scrollTop = log.scrollHeight;
+  }
+
+  function escapeHtml(str) {
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+  }
+
+  // ── Step bar ──────────────────────────────────────────────────────────────
+  let activeStep = null;
+
+  function resetSteps() {
+    activeStep = null;
+    Object.values(STEP_MAP).filter(Boolean).forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.className = 'step';
+    });
+  }
+
+  function activateStep(stage) {
+    const id = STEP_MAP[stage];
+    if (!id || id === activeStep) return;
+    if (activeStep) {
+      const prev = document.getElementById(activeStep);
+      if (prev) prev.className = 'step done';
+    }
+    activeStep = id;
+    const el = document.getElementById(id);
+    if (el) el.className = 'step active';
+  }
+
+  function markStepDone() {
+    Object.values(STEP_MAP).filter(Boolean).forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.className = 'step done';
+    });
+  }
+
+  // ── Actions ───────────────────────────────────────────────────────────────
+  function viewReport()     { if (currentJobId) window.open(`/report/${currentJobId}`, '_blank'); }
+  function downloadOutput() { if (currentJobId) window.location.href = `/download/${currentJobId}`; }
+
+  function resetUI() {
+    currentJobId = null;
+    document.getElementById('progress_panel').style.display = 'none';
+    document.getElementById('start_btn').disabled = false;
+    document.getElementById('repo_url').focus();
+  }
+
+  function shakeInput(id) {
+    const el = document.getElementById(id);
+    el.style.borderColor = 'var(--danger)';
+    el.style.animation   = 'shake 0.4s ease';
+    el.focus();
+    setTimeout(() => { el.style.borderColor = ''; el.style.animation = ''; }, 800);
+  }
+
+  // ── Init ──────────────────────────────────────────────────────────────────
+  updateProviderUI();
+</script>
+
+</body>
+</html>

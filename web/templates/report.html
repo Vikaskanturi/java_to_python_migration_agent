@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Migration Report — Loading…</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    /* ── Reset ─────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:        #0d0f17;
+      --bg-card:   rgba(255,255,255,0.04);
+      --border:    rgba(255,255,255,0.09);
+      --accent:    #63b3ed;
+      --accent2:   #76e3b8;
+      --accent3:   #f6ad55;
+      --text:      #e2e8f0;
+      --muted:     #718096;
+      --success:   #68d391;
+      --danger:    #fc8181;
+      --warning:   #f6ad55;
+      --purple:    #b794f4;
+    }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      background-image:
+        radial-gradient(ellipse at 15% 0%, rgba(99,179,237,0.07) 0%, transparent 45%),
+        radial-gradient(ellipse at 85% 100%, rgba(118,227,184,0.05) 0%, transparent 45%);
+    }
+
+    /* ── Top Nav ─────────────────────────────── */
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: rgba(13,15,23,0.85);
+      backdrop-filter: blur(16px);
+      border-bottom: 1px solid var(--border);
+      padding: 14px 32px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+    }
+
+    .topbar-brand {
+      font-size: 15px;
+      font-weight: 700;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      white-space: nowrap;
+    }
+
+    .topbar-nav {
+      display: flex;
+      gap: 4px;
+      flex-wrap: wrap;
+    }
+
+    .topbar-nav a {
+      padding: 6px 14px;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--muted);
+      text-decoration: none;
+      border: 1px solid transparent;
+      transition: all 0.2s;
+    }
+
+    .topbar-nav a:hover {
+      color: var(--accent);
+      border-color: rgba(99,179,237,0.3);
+      background: rgba(99,179,237,0.05);
+    }
+
+    .topbar-badge {
+      padding: 5px 16px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      white-space: nowrap;
+    }
+
+    .badge-pass   { background: rgba(104,211,145,0.15); color: var(--success); border: 1px solid rgba(104,211,145,0.3); }
+    .badge-review { background: rgba(246,173,85,0.15);  color: var(--warning); border: 1px solid rgba(246,173,85,0.3); }
+    .badge-fail   { background: rgba(252,129,129,0.15); color: var(--danger);  border: 1px solid rgba(252,129,129,0.3); }
+    .badge-info   { background: rgba(99,179,237,0.15);  color: var(--accent);  border: 1px solid rgba(99,179,237,0.3); }
+
+    /* ── Layout ─────────────────────────────── */
+    .page {
+      max-width: 1020px;
+      margin: 0 auto;
+      padding: 40px 24px 80px;
+    }
+
+    /* ── Score Hero ─────────────────────────── */
+    .score-hero {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      align-items: center;
+      gap: 32px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 32px;
+      margin-bottom: 32px;
+      backdrop-filter: blur(10px);
+    }
+
+    .score-repo {
+      font-size: 13px;
+      color: var(--muted);
+      margin-bottom: 6px;
+    }
+
+    .score-repo a { color: var(--accent); text-decoration: none; }
+    .score-repo a:hover { text-decoration: underline; }
+
+    .score-title {
+      font-size: 26px;
+      font-weight: 800;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      line-height: 1.2;
+    }
+
+    .score-circle {
+      width: 110px;
+      height: 110px;
+      border-radius: 50%;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      border: 3px solid var(--border);
+      background: rgba(99,179,237,0.06);
+      flex-shrink: 0;
+    }
+
+    .score-number {
+      font-size: 32px;
+      font-weight: 800;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      line-height: 1;
+    }
+
+    .score-label {
+      font-size: 11px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    /* ── Stat Row ───────────────────────────── */
+    .stat-row {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+      gap: 12px;
+      margin-bottom: 32px;
+    }
+
+    .stat-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 18px;
+      text-align: center;
+    }
+
+    .stat-value {
+      font-size: 28px;
+      font-weight: 800;
+      display: block;
+      line-height: 1;
+      margin-bottom: 6px;
+    }
+
+    .stat-value.blue   { color: var(--accent); }
+    .stat-value.green  { color: var(--success); }
+    .stat-value.orange { color: var(--warning); }
+    .stat-value.red    { color: var(--danger); }
+    .stat-value.purple { color: var(--purple); }
+
+    .stat-name {
+      font-size: 11px;
+      font-weight: 500;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    /* ── Section ────────────────────────────── */
+    .section {
+      margin-bottom: 48px;
+      scroll-margin-top: 80px;
+    }
+
+    .section-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 20px;
+      padding-bottom: 14px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .section-icon { font-size: 22px; }
+
+    .section-title {
+      font-size: 18px;
+      font-weight: 700;
+      color: var(--text);
+    }
+
+    /* ── Markdown content ───────────────────── */
+    .content-panel {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 28px 32px;
+      line-height: 1.75;
+      backdrop-filter: blur(8px);
+    }
+
+    .content-panel h1, .content-panel h2, .content-panel h3 {
+      color: var(--text);
+      font-weight: 700;
+      margin: 24px 0 10px;
+      line-height: 1.3;
+    }
+
+    .content-panel h1 { font-size: 22px; }
+    .content-panel h2 { font-size: 18px; color: var(--accent); }
+    .content-panel h3 { font-size: 15px; color: var(--accent2); }
+
+    .content-panel p { color: #a0aec0; margin: 8px 0; }
+
+    .content-panel table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 16px 0;
+      font-size: 13.5px;
+    }
+
+    .content-panel th {
+      background: rgba(99,179,237,0.1);
+      color: var(--accent);
+      font-weight: 600;
+      padding: 10px 14px;
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .content-panel td {
+      padding: 10px 14px;
+      color: #a0aec0;
+      border-bottom: 1px solid rgba(255,255,255,0.04);
+    }
+
+    .content-panel tr:last-child td { border-bottom: none; }
+    .content-panel tr:hover td { background: rgba(255,255,255,0.02); }
+
+    .content-panel pre {
+      background: #080b11;
+      border: 1px solid rgba(255,255,255,0.06);
+      border-radius: 8px;
+      padding: 16px;
+      overflow-x: auto;
+      margin: 12px 0;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12.5px;
+      line-height: 1.6;
+    }
+
+    .content-panel code {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12.5px;
+      background: rgba(99,179,237,0.1);
+      color: var(--accent);
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+
+    .content-panel pre code {
+      background: none;
+      color: #d4d4d4;
+      padding: 0;
+    }
+
+    .content-panel blockquote {
+      border-left: 3px solid var(--warning);
+      padding: 10px 16px;
+      margin: 12px 0;
+      background: rgba(246,173,85,0.06);
+      border-radius: 0 6px 6px 0;
+      color: #d4a855;
+    }
+
+    .content-panel ul, .content-panel ol {
+      padding-left: 24px;
+      color: #a0aec0;
+    }
+
+    .content-panel li { margin: 4px 0; }
+
+    .content-panel strong { color: var(--text); font-weight: 600; }
+
+    /* ── Mismatch cards ─────────────────────── */
+    .mismatch-list { display: flex; flex-direction: column; gap: 12px; }
+
+    .mismatch-card {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px 20px;
+      background: rgba(255,255,255,0.02);
+    }
+
+    .mismatch-card.Critical { border-left: 3px solid var(--danger); }
+    .mismatch-card.Medium   { border-left: 3px solid var(--warning); }
+    .mismatch-card.Low      { border-left: 3px solid var(--muted); }
+
+    .mismatch-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+
+    .severity-pill {
+      font-size: 11px;
+      font-weight: 700;
+      padding: 3px 10px;
+      border-radius: 20px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .severity-pill.Critical { background: rgba(252,129,129,0.15); color: var(--danger); }
+    .severity-pill.Medium   { background: rgba(246,173,85,0.15); color: var(--warning); }
+    .severity-pill.Low      { background: rgba(113,128,150,0.2); color: var(--muted); }
+
+    .mismatch-location { font-size: 13px; font-weight: 600; color: var(--text); flex: 1; }
+
+    .mismatch-body { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; font-size: 13px; }
+    .mismatch-field label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 3px; display: block; }
+    .mismatch-field p { color: #a0aec0; }
+    .mismatch-rec { margin-top: 10px; padding: 10px 12px; background: rgba(118,227,184,0.05); border-radius: 6px; font-size: 13px; color: var(--accent2); }
+
+    /* ── Empty state ────────────────────────── */
+    .empty { text-align: center; padding: 48px; color: var(--muted); font-size: 14px; }
+    .empty .empty-icon { font-size: 36px; margin-bottom: 12px; }
+
+    /* ── Responsive ─────────────────────────── */
+    @media (max-width: 680px) {
+      .score-hero { grid-template-columns: 1fr; }
+      .score-circle { margin: 0 auto; }
+      .mismatch-body { grid-template-columns: 1fr; }
+      .topbar-nav { display: none; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ── Top Bar ── -->
+<nav class="topbar">
+  <span class="topbar-brand">☕ → 🐍 Migration Report</span>
+  <div class="topbar-nav">
+    <a href="#migration">Migration</a>
+    <a href="#validation">Validation</a>
+    <a href="#tests">Tests</a>
+    <a href="#devguide">Dev Guide</a>
+  </div>
+  <span id="topbar_badge" class="topbar-badge badge-info">Loading…</span>
+</nav>
+
+<!-- ── Page ── -->
+<div class="page" id="page_content">
+  <div style="text-align:center; padding: 80px 24px; color: #4a5568;">
+    <div style="font-size:40px; margin-bottom:16px;">⏳</div>
+    <p>Loading report…</p>
+  </div>
+</div>
+
+<script>
+/**
+ * This page is served at /report/<job_id> by the FastAPI server.
+ * It tries to fetch the pre-generated full_report.html and inlines it,
+ * then post-processes it with highlighting and stat cards.
+ * If the inline HTML is already provided (doc_agent bakes it), it renders directly.
+ */
+(function () {
+  // The server injects the full report HTML as a script var when it exists,
+  // otherwise we show the structured iframe fallback.
+
+  const jobId = window.location.pathname.split('/').pop();
+
+  // Check if server already returned the baked HTML (non-empty body from FastAPI)
+  // If so, the HTMLResponse has already replaced this entire page — we only
+  // reach this script when the report isn't ready yet.
+  document.getElementById('page_content').innerHTML = `
+    <div style="text-align:center; padding:80px 24px;">
+      <div style="font-size:48px; margin-bottom:20px;">📄</div>
+      <h2 style="font-size:22px; font-weight:700; color:#e2e8f0; margin-bottom:12px;">Report Not Ready Yet</h2>
+      <p style="color:#718096; margin-bottom:28px;">The documentation agent hasn't finished — or the "docs" step wasn't selected.</p>
+      <a href="/" style="
+        display:inline-flex; align-items:center; gap:8px;
+        padding:11px 22px; border-radius:8px;
+        background:linear-gradient(135deg,#4299e1,#38b2ac);
+        color:#fff; font-weight:700; font-size:14px; text-decoration:none;
+        box-shadow:0 4px 16px rgba(66,153,225,0.35);">
+        ← Back to Dashboard
+      </a>
+    </div>`;
+
+  document.getElementById('topbar_badge').textContent = 'Pending';
+  document.title = 'Migration Report — Not Ready';
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,220 @@
+[0] Assignment: Build AI Agents for Java to Python Code Migration, Validation, and Testing
+[1] Objective
+[2] Design and implement AI-powered agents that can:
+[3] Migrate a Java-based application to Python. 
+[4] Validate that the migrated Python code preserves the original logic and behavior. 
+[5] Generate comprehensive, high-quality unit tests for both: 
+[6] Original Java code 
+[7] Migrated Python code 
+[8] Produce detailed documentation explaining: 
+[9] Migration decisions 
+[10] Logic validation 
+[11] Any deviations or assumptions 
+[12] The system should ensure functional parity between Java and Python implementations with high confidence.
+[14] Project Scope
+[15] 1. Codebase Selection
+[16] Use a real-world, open-source Java repository (medium complexity preferred). 
+[17] Examples:
+[18] Apache Commons modules 
+[19] Spring Boot services 
+[20] Java backend applications 
+[21] The engineer must:
+[22] Justify repository selection 
+[23] Analyze architecture and dependencies 
+[24] Identify external integrations (DB, APIs, etc.) 
+[26] Agent 1: Code Migration Agent (Java → Python)
+[27] Goal
+[28] Convert Java code into idiomatic, production-quality Python code while preserving behavior.
+[29] Inputs
+[30] Full Java codebase 
+[31] Build files (Maven/Gradle) 
+[32] Requirements/specifications (if available) 
+[33] Expected Capabilities
+[34] 1. Syntax and Structure Translation
+[35] Convert: 
+[36] Classes → Python classes 
+[37] Interfaces → abstract base classes or protocols 
+[38] Methods → Python functions 
+[39] Handle: 
+[40] Static typing → Python typing (typing module) 
+[41] Packages → Python modules 
+[42] 2. Framework Mapping
+[43] Map Java frameworks to Python equivalents where applicable: 
+[44] Spring Boot → Flask/FastAPI 
+[45] JPA/Hibernate → SQLAlchemy 
+[46] 3. Idiomatic Python Code
+[47] Follow Python best practices: 
+[48] PEP 8 compliance 
+[49] Pythonic constructs (list comprehensions, etc.) 
+[50] Proper exception handling 
+[51] 4. Dependency Translation
+[52] Convert dependencies to Python equivalents 
+[53] Provide requirements.txt or pyproject.toml 
+[54] 5. Edge Case Handling
+[55] Null handling → None 
+[56] Checked exceptions → Python exception patterns 
+[57] 6. Incremental Migration Support
+[58] Ability to process module-by-module or file-by-file 
+[60] Output Format
+[61] Fully structured Python project 
+[62] Equivalent module structure 
+[63] Dependency file (requirements.txt) 
+[65] Agent 2: Validation Agent (Logic & Behavior Verification)
+[66] Goal
+[67] Ensure that migrated Python code is functionally equivalent to the original Java code.
+[68] Inputs
+[69] Original Java code 
+[70] Migrated Python code 
+[71] Test cases (existing or generated) 
+[72] Expected Capabilities
+[73] 1. Functional Equivalence Checking
+[74] Compare: 
+[75] Inputs and outputs 
+[76] Business logic 
+[77] Data transformations 
+[78] 2. Static Analysis
+[79] Detect: 
+[80] Missing logic 
+[81] Incorrect translations 
+[82] Type mismatches 
+[83] 3. Dynamic Validation (if executable)
+[84] Run both versions and compare outputs 
+[85] 4. Edge Case Verification
+[86] Validate: 
+[87] Boundary conditions 
+[88] Error handling 
+[89] Null/None behavior 
+[90] 5. Regression Detection
+[91] Ensure no loss of functionality 
+[93] Output Format
+[94] {
+  "summary": "Validation overview",
+  "equivalence_score": "0-100",
+  "mismatches": [
+    {
+      "type": "Logic | Data | Exception",
+      "location": "file/function",
+      "description": "Mismatch explanation",
+      "java_behavior": "Expected behavior",
+      "python_behavior": "Observed behavior",
+      "recommendation": "Fix suggestion"
+    }
+  ],
+  "status": "Pass | Fail | Needs Review"
+}
+[96] Agent 3: Unit Test Generation Agent
+[97] Goal
+[98] Generate complete, high-quality unit tests for both Java and Python implementations.
+[99] Inputs
+[100] Java codebase 
+[101] Python migrated code 
+[102] Requirements/specifications 
+[103] Expected Capabilities
+[104] 1. Test Coverage
+[105] Target 80–100% coverage 
+[106] Include: 
+[107] Happy paths 
+[108] Edge cases 
+[109] Failure scenarios 
+[110] 2. Dual-Language Test Generation
+[111] Java: 
+[112] JUnit 5 
+[113] Mockito 
+[114] Python: 
+[115] pytest / unittest 
+[116] unittest.mock 
+[117] 3. Cross-Language Test Parity
+[118] Ensure tests validate equivalent behavior in both versions 
+[119] 4. Smart Assertions
+[120] Validate correctness, not just execution 
+[121] 5. Regression Test Creation
+[122] Automatically generate tests for migrated code paths 
+[124] Output Format
+[125] Java Example
+[126] class CalculatorTest {
+
+    @Test
+    void shouldAddNumbersCorrectly() {
+        Calculator calc = new Calculator();
+        assertEquals(5, calc.add(2, 3));
+    }
+}
+[127] Python Example
+[128] def test_add_numbers_correctly():
+    calc = Calculator()
+    assert calc.add(2, 3) == 5
+[130] Agent 4: Documentation Agent
+[131] Goal
+[132] Generate detailed, human-readable documentation explaining migration and validation.
+[133] Expected Capabilities
+[134] 1. Migration Report
+[135] File-by-file transformation summary 
+[136] Framework and dependency mapping 
+[137] Design decisions 
+[138] 2. Logic Validation Report
+[139] Explanation of how equivalence was verified 
+[140] Identified mismatches and fixes 
+[141] 3. Known Limitations
+[142] Unsupported features 
+[143] Assumptions made 
+[144] 4. Developer Guidance
+[145] How to run the migrated system 
+[146] How to extend or maintain 
+[148] Output Format
+[149] Markdown or HTML documentation including:
+[150] Architecture overview 
+[151] Migration mapping table 
+[152] Validation results 
+[153] Test coverage summary 
+[155] System Design Expectations
+[156] 1. Agent Architecture
+[157] Modular multi-agent system: 
+[158] Migration agent 
+[159] Validation agent 
+[160] Test generation agent 
+[161] Documentation agent 
+[162] 2. Context Handling
+[163] Efficient handling of large repositories 
+[164] Use: 
+[165] Chunking strategies 
+[166] Optional embeddings/vector database 
+[167] 3. LLM Strategy
+[168] Prompt engineering 
+[169] Context injection 
+[170] Iterative refinement loops 
+[171] 4. Execution Framework
+[172] CLI tool or web interface 
+[173] Optional CI/CD integration 
+[175] Evaluation Criteria
+[177] Bonus Points
+[178] Automated execution comparison (Java vs Python runtime) 
+[179] Dockerized environments for both versions 
+[180] CI pipeline integration 
+[181] Incremental migration support 
+[182] Visualization of migration coverage 
+[184] Deliverables
+[185] Source code (GitHub repository) 
+[186] README including: 
+[187] Setup instructions 
+[188] Architecture explanation 
+[189] Design decisions 
+[190] Migrated Python project 
+[191] Validation reports 
+[192] Unit test suites (Java + Python) 
+[193] Documentation report 
+[194] Demo: 
+[195] Sample migration 
+[196] Validation results 
+[197] Optional: Video walkthrough 
+[199] Constraints
+[200] Must use a real-world Java project 
+[201] Avoid hardcoded transformations 
+[202] Ensure scalability for large codebases 
+[203] Maintain readability and maintainability 
+[204] Ensure Python code is idiomatic, not just transliterated 
+[206] What “Great” Looks Like
+[207] Python code feels like it was originally written in Python 
+[208] Near-perfect functional equivalence 
+[209] Strong validation with minimal false positives 
+[210] High-quality, meaningful test coverage in both languages 
+[211] Clear, developer-friendly documentation
